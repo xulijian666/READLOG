@@ -206,7 +206,7 @@ fn build_archive_url(base_url: &str, log_type: &str, month: &str, day: &str, hou
     let base = Url::parse(base_url)?;
     // 确保基础路径以 / 结尾
     let base_path = if base.path().ends_with('/') {
-        base.path()
+        base.path().trim_end_matches('/')
     } else if base.path().ends_with(".log") {
         base.path().rsplit_once('/').map(|(p, _)| p).unwrap_or("")
     } else {

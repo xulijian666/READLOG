@@ -182,7 +182,7 @@ export function ServerConfig() {
       </div>
 
       <p className="mt-3 text-xs text-[#69778c]">
-        URL 配置为服务器日志目录（以 / 结尾），例如 http://10.142.149.25:61000/.../10.142.149.124/。勾选的服务器会下载所选日志类型（{logType}.log）的实时日志或归档日志。
+        配置服务器 URL（例如 http://10.142.149.25:61000/.../10.142.149.124/），测试连接和下载时会自动拼接所选日志类型（{logType}.log）。
       </p>
       {(editing || adding) && (
         <AddServerModal
