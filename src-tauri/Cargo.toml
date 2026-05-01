@@ -1,0 +1,40 @@
+[package]
+name = "read-log"
+version = "0.1.0"
+description = "Multi-server log downloader"
+authors = ["ReadLog"]
+edition = "2021"
+
+[lib]
+name = "read_log"
+path = "src/lib.rs"
+
+[[bin]]
+name = "read-log"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.4.1", features = [] }
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"
+flate2 = "1"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+scraper = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2.8.5", features = [] }
+tauri-plugin-dialog = "2.4.0"
+tauri-plugin-fs = "2.4.2"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "fs", "io-util"] }
+tokio-util = "0.7"
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Memory"] }
+
+[dev-dependencies]
+tempfile = "3"
