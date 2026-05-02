@@ -41,6 +41,7 @@ const mockConfig: AppConfig = {
     defaultBatchSize: 500,
     defaultLevel: "ALL",
     logType: "app",
+    downloadPath: "",
   },
 };
 

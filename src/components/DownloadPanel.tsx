@@ -1,7 +1,13 @@
-import { Archive, Download, FileText, FolderOpen, Scissors } from "lucide-react";
-import { useState } from "react";
-import { invoke } from "../lib/runtime";
+import { Archive, Bot, Copy, Download, FileText, FolderInput, FolderOpen, Scissors } from "lucide-react";
+import { useEffect, useState } from "react";
+import { invoke, isTauriRuntime } from "../lib/runtime";
 import { useServerStore } from "../store/serverStore";
+
+async function pickDirectory(): Promise<string | null> {
+  if (!isTauriRuntime()) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  return open({ directory: true, title: "选择下载目录" });
+}
 import type { DownloadSummary } from "../types/query";
 
 function formatBytes(bytes: number) {
@@ -33,6 +39,13 @@ export function DownloadPanel() {
     hourEnd: "",
   });
   const [tailLineCount, setTailLineCount] = useState("500");
+  const [agentInstalled, setAgentInstalled] = useState(false);
+
+  useEffect(() => {
+    invoke<{ installed: boolean }>("check_agent_status")
+      .then((result) => setAgentInstalled(result.installed))
+      .catch(() => setAgentInstalled(false));
+  }, []);
 
   if (!config) return null;
 
@@ -169,6 +182,16 @@ export function DownloadPanel() {
     }
   };
 
+  const handleCopyPrompt = async () => {
+    if (!outputPath) return;
+    try {
+      await invoke("copy_agent_prompt", { filePath: outputPath });
+      setMessage("提示词已复制到剪切板，请打开 Claude Code 粘贴");
+    } catch (caught) {
+      setError(String(caught));
+    }
+  };
+
   return (
     <section className="flex flex-1 flex-col bg-[#f5f7fb] px-5 py-5">
       <div className="rounded-lg border border-[#d9e1ec] bg-white p-5">
@@ -205,6 +228,28 @@ export function DownloadPanel() {
             onClick={() => setMode("tail")}
           >
             <Scissors size={16} /> 截取日志
+          </button>
+        </div>
+
+        <div className="mb-4 flex items-center gap-3">
+          <span className="shrink-0 text-sm text-[#69778c]">下载目录</span>
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-[#cfd8e6] bg-[#f8fafc] px-3 py-2">
+            <span className="truncate text-sm text-[#243145]">
+              {config.settings.downloadPath || "默认下载目录"}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-[#cfd8e6] bg-white px-3 py-2 text-sm text-[#69778c] hover:bg-[#eef3f8]"
+            onClick={async () => {
+              const dir = await pickDirectory();
+              if (dir) {
+                const updated = { ...config, settings: { ...config.settings, downloadPath: dir } };
+                await useServerStore.getState().save(updated);
+              }
+            }}
+          >
+            <FolderInput size={15} /> 选择目录
           </button>
         </div>
 
@@ -335,6 +380,13 @@ export function DownloadPanel() {
                   className="inline-flex items-center gap-1 rounded border border-[#047857] px-2 py-1 text-xs text-[#047857] hover:bg-[#047857] hover:text-white"
                 >
                   <FolderOpen size={14} /> 打开文件夹
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyPrompt()}
+                  className="inline-flex items-center gap-1 rounded border border-[#7c3aed] px-2 py-1 text-xs text-[#7c3aed] hover:bg-[#7c3aed] hover:text-white"
+                >
+                  <Copy size={14} /> 复制提示词
                 </button>
               </div>
             )}

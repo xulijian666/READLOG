@@ -47,6 +47,7 @@ export interface AppConfig {
     defaultBatchSize: number;
     defaultLevel: LogLevel;
     logType: string;
+    downloadPath: string;
   };
 }
 

@@ -36,6 +36,8 @@ pub struct Settings {
     pub default_level: String,
     #[serde(default = "default_log_type")]
     pub log_type: String,
+    #[serde(default)]
+    pub download_path: String,
 }
 
 fn default_log_type() -> String {
@@ -92,6 +94,7 @@ impl Default for AppConfig {
                 default_batch_size: 500,
                 default_level: "ALL".to_string(),
                 log_type: "app".to_string(),
+                download_path: String::new(),
             },
         }
     }

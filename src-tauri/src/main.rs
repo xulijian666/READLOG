@@ -4,6 +4,12 @@ use read_log::{
     download::{download_realtime_logs as do_download_realtime_logs, download_archive_logs as do_download_archive_logs, download_tail_logs as do_download_tail_logs, DownloadSummary},
     error::AppError,
 };
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct AgentStatus {
+    installed: bool,
+}
 
 #[tauri::command]
 async fn load_app_config() -> Result<AppConfig, AppError> {
@@ -52,7 +58,8 @@ async fn download_realtime_logs(
     if servers.is_empty() {
         return Err(AppError::Message("请至少勾选一条服务器".to_string()));
     }
-    do_download_realtime_logs(&servers, &config.credentials, &log_type, &output_path).await
+    let effective_path = if output_path.is_empty() { &config.settings.download_path } else { &output_path };
+    do_download_realtime_logs(&servers, &config.credentials, &log_type, effective_path).await
 }
 
 #[tauri::command]
@@ -80,7 +87,8 @@ async fn download_archive_logs(
     }
     let start: u32 = hour_start.parse().map_err(|_| AppError::Message("起始小时格式错误".to_string()))?;
     let end: u32 = hour_end.parse().map_err(|_| AppError::Message("结束小时格式错误".to_string()))?;
-    do_download_archive_logs(&servers, &config.credentials, &log_type, &month, &day, start, end, &output_path).await
+    let effective_path = if output_path.is_empty() { &config.settings.download_path } else { &output_path };
+    do_download_archive_logs(&servers, &config.credentials, &log_type, &month, &day, start, end, effective_path).await
 }
 
 #[tauri::command]
@@ -107,7 +115,62 @@ async fn download_tail_logs(
     if count == 0 {
         return Err(AppError::Message("行数必须大于 0".to_string()));
     }
-    do_download_tail_logs(&servers, &config.credentials, &log_type, count, &output_path).await
+    let effective_path = if output_path.is_empty() { &config.settings.download_path } else { &output_path };
+    do_download_tail_logs(&servers, &config.credentials, &log_type, count, effective_path).await
+}
+
+#[tauri::command]
+fn check_agent_status() -> Result<AgentStatus, AppError> {
+    let installed = std::process::Command::new("where")
+        .arg("claude")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    Ok(AgentStatus { installed })
+}
+
+#[tauri::command]
+fn copy_agent_prompt(file_path: String) -> Result<(), AppError> {
+    let full_prompt = format!(
+        "以下是需要分析的日志文件路径：{}\n\n\
+         请围绕我的问题分析该日志，只提取与问题相关的内容，忽略无关信息。不要主动读取其他日志文件，但我在问题中明确要求查看的文件（如源码、配置等）除外。结论优先，细节随后。\n\n\
+         我的问题：",
+        file_path
+    );
+    #[cfg(target_os = "windows")]
+    {
+        let temp_file = std::env::temp_dir().join("readlog_clip.txt");
+        std::fs::write(&temp_file, full_prompt.as_bytes())?;
+        std::process::Command::new("powershell")
+            .args([
+                "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-Command",
+                &format!("Set-Clipboard -Value (Get-Content -Raw -Encoding UTF8 '{}')", temp_file.display()),
+            ])
+            .spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::io::Write;
+        let mut child = std::process::Command::new("pbcopy")
+            .stdin(std::process::Stdio::piped())
+            .spawn()?;
+        child.stdin.take().unwrap().write_all(full_prompt.as_bytes())?;
+        child.wait()?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::io::Write;
+        let mut child = std::process::Command::new("xclip")
+            .args(["-selection", "clipboard"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()?;
+        child.stdin.take().unwrap().write_all(full_prompt.as_bytes())?;
+        child.wait()?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -165,6 +228,8 @@ fn main() {
             download_realtime_logs,
             download_archive_logs,
             download_tail_logs,
+            check_agent_status,
+            copy_agent_prompt,
             open_file,
             open_folder
         ])

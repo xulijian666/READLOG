@@ -280,15 +280,23 @@ fn build_archive_url(base_url: &str, log_type: &str, month: &str, day: &str, hou
 }
 
 fn resolve_output_path(output_path: &str, log_type: &str, mode: &str) -> AppResult<PathBuf> {
+    let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let filename = format!("{log_type}_{mode}_{stamp}.log");
+
     if !output_path.trim().is_empty() {
-        return Ok(PathBuf::from(output_path));
+        let p = PathBuf::from(output_path);
+        if p.is_dir() {
+            let mut path = p;
+            path.push(&filename);
+            return Ok(path);
+        }
+        return Ok(p);
     }
 
     let mut path = dirs::download_dir()
         .or_else(dirs::home_dir)
         .ok_or_else(|| AppError::NotFound("Downloads directory".to_string()))?;
-    let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-    path.push(format!("{log_type}_{mode}_{stamp}.log"));
+    path.push(&filename);
     Ok(path)
 }
 
