@@ -1,4 +1,4 @@
-import { Archive, Download, FileText, FolderOpen } from "lucide-react";
+import { Archive, Download, FileText, FolderOpen, Scissors } from "lucide-react";
 import { useState } from "react";
 import { invoke } from "../lib/runtime";
 import { useServerStore } from "../store/serverStore";
@@ -10,7 +10,7 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-type DownloadMode = "realtime" | "archive";
+type DownloadMode = "realtime" | "archive" | "tail";
 
 interface ArchiveParams {
   month: string;
@@ -32,6 +32,7 @@ export function DownloadPanel() {
     hourStart: "",
     hourEnd: "",
   });
+  const [tailLineCount, setTailLineCount] = useState("500");
 
   if (!config) return null;
 
@@ -123,6 +124,33 @@ export function DownloadPanel() {
     }
   };
 
+  const downloadTail = async () => {
+    setError("");
+    const count = parseInt(tailLineCount, 10);
+    if (!count || count <= 0) {
+      setError("请输入有效的行数");
+      return;
+    }
+    setDownloading(true);
+    setOutputPath("");
+    setMessage(`正在截取 ${enabledServers.length} 个服务器的 ${logType}.log 最后 ${count} 行...`);
+    try {
+      const summary = await invoke<DownloadSummary>("download_tail_logs", {
+        serverIds: enabledServers.map((server) => server.id),
+        logType,
+        lineCount: tailLineCount,
+        outputPath: "",
+      });
+      setOutputPath(summary.outputPath);
+      setMessage(`已截取 ${summary.serverCount} 个日志各 ${count} 行，写入 ${formatBytes(summary.bytesWritten)}：${summary.outputPath}`);
+    } catch (caught) {
+      setError(String(caught));
+      setMessage("");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const handleOpenFile = async () => {
     if (!outputPath) return;
     try {
@@ -167,6 +195,17 @@ export function DownloadPanel() {
           >
             <Archive size={16} /> 归档日志
           </button>
+          <button
+            type="button"
+            className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md ${
+              mode === "tail"
+                ? "bg-[#2563eb] text-white"
+                : "border border-[#cfd8e6] text-[#69778c] hover:bg-[#eef3f8]"
+            }`}
+            onClick={() => setMode("tail")}
+          >
+            <Scissors size={16} /> 截取日志
+          </button>
         </div>
 
         {mode === "realtime" && (
@@ -174,7 +213,7 @@ export function DownloadPanel() {
             <div>
               <h3 className="text-base font-semibold text-[#243145]">下载实时日志</h3>
               <p className="mt-1 text-sm text-[#69778c]">
-                下载勾选服务器的 {logType}.log 实时日志文件，按顺序合并。
+                下载勾选服务器的 {logType}.log 完整实时日志文件，按顺序合并。
               </p>
             </div>
             <button
@@ -244,6 +283,35 @@ export function DownloadPanel() {
                 disabled={downloading || enabledServers.length === 0}
               >
                 <Archive size={18} /> {downloading ? "下载中" : `下载归档 (${enabledServers.length})`}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {mode === "tail" && (
+          <div>
+            <h3 className="text-base font-semibold text-[#243145]">截取日志尾部</h3>
+            <p className="mt-1 text-sm text-[#69778c]">
+              获取勾选服务器的 {logType}.log 最后 N 行，按顺序合并。
+            </p>
+            <div className="mt-4 flex items-end gap-4">
+              <label className="block text-sm font-medium">
+                截取行数
+                <input
+                  className="mt-1 w-24 rounded-md border border-[#cfd8e6] bg-white px-3 py-2 outline-none focus:border-[#2563eb]"
+                  type="text"
+                  placeholder="500"
+                  value={tailLineCount}
+                  onChange={(e) => setTailLineCount(e.target.value)}
+                />
+              </label>
+              <button
+                className="inline-flex items-center gap-2 rounded-md bg-[#2563eb] px-5 py-2.5 font-medium text-white hover:bg-[#1d4ed8] disabled:opacity-50"
+                type="button"
+                onClick={() => void downloadTail()}
+                disabled={downloading || enabledServers.length === 0}
+              >
+                <Scissors size={18} /> {downloading ? "截取中" : `截取 (${enabledServers.length})`}
               </button>
             </div>
           </div>

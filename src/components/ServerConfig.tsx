@@ -7,7 +7,7 @@ import { AddServerModal } from "./AddServerModal";
 
 type CheckState = Record<string, { loading: boolean; result?: ConnectionCheckResult; error?: string }>;
 
-const LOG_TYPES = ["app", "sql", "dlp", "monitor"];
+const LOG_TYPES = ["app", "sql"];
 
 export function ServerConfig() {
   const { config, toggleServer, upsertServer, deleteServer, save } = useServerStore();

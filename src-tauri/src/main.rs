@@ -1,7 +1,7 @@
 use read_log::{
     config::{load_config, save_config, AppConfig},
     directory::{test_connection, ConnectionCheckResult},
-    download::{download_realtime_logs as do_download_realtime_logs, download_archive_logs as do_download_archive_logs, DownloadSummary},
+    download::{download_realtime_logs as do_download_realtime_logs, download_archive_logs as do_download_archive_logs, download_tail_logs as do_download_tail_logs, DownloadSummary},
     error::AppError,
 };
 
@@ -84,6 +84,33 @@ async fn download_archive_logs(
 }
 
 #[tauri::command]
+async fn download_tail_logs(
+    server_ids: Vec<String>,
+    log_type: String,
+    line_count: String,
+    output_path: String,
+) -> Result<DownloadSummary, AppError> {
+    let config = load_config().await?;
+    if config.credentials.username.trim().is_empty() {
+        return Err(AppError::Message("请先填写统一用户名".to_string()));
+    }
+    let servers: Vec<_> = config
+        .servers
+        .iter()
+        .filter(|server| server.enabled && server_ids.contains(&server.id))
+        .cloned()
+        .collect();
+    if servers.is_empty() {
+        return Err(AppError::Message("请至少勾选一条服务器".to_string()));
+    }
+    let count: usize = line_count.parse().map_err(|_| AppError::Message("行数格式错误".to_string()))?;
+    if count == 0 {
+        return Err(AppError::Message("行数必须大于 0".to_string()));
+    }
+    do_download_tail_logs(&servers, &config.credentials, &log_type, count, &output_path).await
+}
+
+#[tauri::command]
 fn open_file(path: String) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
     {
@@ -137,6 +164,7 @@ fn main() {
             test_all_connections,
             download_realtime_logs,
             download_archive_logs,
+            download_tail_logs,
             open_file,
             open_folder
         ])

@@ -129,7 +129,10 @@ pub async fn load_config() -> AppResult<AppConfig> {
 }
 
 pub async fn save_config(mut config: AppConfig) -> AppResult<AppConfig> {
-    for server in &config.servers {
+    for server in &mut config.servers {
+        if !server.base_url.ends_with('/') {
+            server.base_url.push('/');
+        }
         validate_log_url(&server.base_url)?;
     }
 

@@ -75,7 +75,15 @@ pub async fn download_archive_logs(
     hour_end: u32,
     output_path: &str,
 ) -> AppResult<DownloadSummary> {
-    let base_output_path = resolve_output_path(output_path, log_type, "archive")?;
+    let base_output_path = if output_path.trim().is_empty() {
+        let mut path = dirs::download_dir()
+            .or_else(dirs::home_dir)
+            .ok_or_else(|| AppError::NotFound("Downloads directory".to_string()))?;
+        path.push(format!("{log_type}_archive_{month}-{day}_{:02}h-{:02}h.log", hour_start, hour_end));
+        path
+    } else {
+        PathBuf::from(output_path)
+    };
     let password = crate::crypto::reveal_password(&credentials.password)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
@@ -188,6 +196,55 @@ async fn download_server_archive(
     }
 
     Ok(all_content)
+}
+
+pub async fn download_tail_logs(
+    servers: &[ServerConfig],
+    credentials: &AuthConfig,
+    log_type: &str,
+    line_count: usize,
+    output_path: &str,
+) -> AppResult<DownloadSummary> {
+    let output_path = resolve_output_path(output_path, log_type, "tail")?;
+    let password = crate::crypto::reveal_password(&credentials.password)?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+    if let Some(parent) = output_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let mut output = tokio::fs::File::create(&output_path).await?;
+    let mut bytes_written = 0_u64;
+
+    for server in servers {
+        let url = build_realtime_url(&server.base_url, log_type)?;
+        let header = format!("\n===== {} | {} (last {} lines) =====\n", server.name, url, line_count);
+        output.write_all(header.as_bytes()).await?;
+        bytes_written += header.len() as u64;
+
+        let response = client
+            .get(url.clone())
+            .basic_auth(&credentials.username, Some(password.clone()))
+            .send()
+            .await?
+            .error_for_status()?;
+        let body = response.text().await?;
+        let lines: Vec<&str> = body.lines().collect();
+        let tail_start = lines.len().saturating_sub(line_count);
+        let tail_content = lines[tail_start..].join("\n");
+        if !tail_content.is_empty() {
+            output.write_all(tail_content.as_bytes()).await?;
+            bytes_written += tail_content.len() as u64;
+        }
+        output.write_all(b"\n").await?;
+        bytes_written += 1;
+    }
+
+    Ok(DownloadSummary {
+        server_count: servers.len(),
+        bytes_written,
+        output_path: output_path.to_string_lossy().to_string(),
+    })
 }
 
 fn build_realtime_url(base_url: &str, log_type: &str) -> AppResult<Url> {

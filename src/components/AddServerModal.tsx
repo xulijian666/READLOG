@@ -45,7 +45,8 @@ export function AddServerModal({ server, onClose, onSave }: Props) {
         onSubmit={(event) => {
           event.preventDefault();
           if (!validate()) return;
-          onSave(draft);
+          const url = draft.baseUrl.endsWith("/") ? draft.baseUrl : draft.baseUrl + "/";
+          onSave({ ...draft, baseUrl: url });
         }}
       >
         <div className="flex items-center justify-between border-b border-[#e3e8f0] px-5 py-4">
