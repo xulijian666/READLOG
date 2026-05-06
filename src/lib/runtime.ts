@@ -9,27 +9,40 @@ export function isTauriRuntime() {
 }
 
 const mockConfig: AppConfig = {
-  servers: [
+  baseUrl: "http://10.142.149.25:61000/",
+  logEntries: [
     {
       id: "mock-sit-124",
       name: "SIT-124",
-      baseUrl: "http://10.142.149.25:61000/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.124/",
+      path: "/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.124/",
+      logFile: "app.log",
+      visible: true,
       enabled: true,
       displayOrder: 0,
+      groupId: "mock-g1",
+      groupName: "核心服务",
     },
     {
       id: "mock-sit-186",
       name: "SIT-186",
-      baseUrl: "http://10.142.149.25:61000/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.186/",
+      path: "/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.186/",
+      logFile: "app.log",
+      visible: true,
       enabled: true,
       displayOrder: 1,
+      groupId: "mock-g1",
+      groupName: "核心服务",
     },
     {
       id: "mock-sit-50",
       name: "SIT-50",
-      baseUrl: "http://10.142.149.25:61000/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.50/",
+      path: "/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.50/",
+      logFile: "app.log",
+      visible: true,
       enabled: false,
       displayOrder: 2,
+      groupId: "mock-g2",
+      groupName: "接口服务",
     },
   ],
   credentials: {
@@ -40,7 +53,6 @@ const mockConfig: AppConfig = {
     maxConcurrentServers: 3,
     defaultBatchSize: 500,
     defaultLevel: "ALL",
-    logType: "app",
     downloadPath: "",
   },
 };
@@ -73,23 +85,25 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
         { name: "app.log", url: "browser-preview://app.log", isDir: false },
       ] satisfies DirEntry[] as T;
     case "test_all_connections":
-      return readBrowserConfig().servers
-        .filter((server) => (args?.serverIds as string[] | undefined)?.includes(server.id) ?? true)
+      return readBrowserConfig().logEntries
+        .filter((entry) => (args?.logEntryIds as string[] | undefined)?.includes(entry.id) ?? true)
         .map(
-          (server) =>
+          (entry) =>
             ({
               ok: true,
-              serverId: server.id,
-              serverName: server.name,
+              logEntryId: entry.id,
+              serverName: entry.name,
               statusCode: 200,
               message: "浏览器预览连接正常",
               fileCount: 1,
               fileSize: 1024 * 1024,
             }) satisfies ConnectionCheckResult,
         ) as T;
-    case "download_checked_logs":
+    case "download_realtime_logs":
+    case "download_archive_logs":
+    case "download_tail_logs":
       return {
-        serverCount: (args?.serverIds as string[] | undefined)?.length ?? 0,
+        serverCount: (args?.logEntryIds as string[] | undefined)?.length ?? 0,
         bytesWritten: 0,
         outputPath: String(args?.outputPath ?? ""),
       } satisfies DownloadSummary as T;

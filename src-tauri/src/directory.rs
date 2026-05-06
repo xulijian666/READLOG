@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use url::Url;
 
-use crate::config::{validate_log_url, AuthConfig, ServerConfig};
+use crate::config::{build_full_url, validate_log_url, AuthConfig, LogEntry};
 use crate::error::{AppError, AppResult};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -18,7 +18,7 @@ pub struct DirEntry {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionCheckResult {
     pub ok: bool,
-    pub server_id: String,
+    pub log_entry_id: String,
     pub server_name: String,
     pub status_code: u16,
     pub message: String,
@@ -53,29 +53,33 @@ pub fn parse_directory_listing(html: &str, base_url: &str) -> AppResult<Vec<DirE
     Ok(entries)
 }
 
-pub async fn fetch_directory_entries(server: &ServerConfig, credentials: &AuthConfig) -> AppResult<Vec<DirEntry>> {
+pub async fn fetch_directory_entries(base_url: &str, credentials: &AuthConfig) -> AppResult<Vec<DirEntry>> {
     let password = crate::crypto::reveal_password(&credentials.password)?;
     let html = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()?
-        .get(&server.base_url)
+        .get(base_url)
         .basic_auth(&credentials.username, Some(password))
         .send()
         .await?
         .error_for_status()?
         .text()
         .await?;
-    parse_directory_listing(&html, &server.base_url)
+    parse_directory_listing(&html, base_url)
 }
 
-pub async fn test_connection(server: &ServerConfig, credentials: &AuthConfig, log_type: &str) -> AppResult<ConnectionCheckResult> {
-    validate_log_url(&server.base_url)?;
+pub async fn test_log_entry_connection(
+    base_url: &str,
+    credentials: &AuthConfig,
+    entry: &LogEntry,
+) -> AppResult<ConnectionCheckResult> {
+    let full_url = build_full_url(base_url, &entry.path, &entry.log_file)?;
+    validate_log_url(&full_url)?;
     let password = crate::crypto::reveal_password(&credentials.password)?;
-    let test_url = build_test_url(&server.base_url, log_type)?;
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()?
-        .get(test_url.clone())
+        .head(&full_url)
         .basic_auth(&credentials.username, Some(password))
         .send()
         .await?;
@@ -85,8 +89,8 @@ pub async fn test_connection(server: &ServerConfig, credentials: &AuthConfig, lo
     if !status.is_success() {
         return Ok(ConnectionCheckResult {
             ok: false,
-            server_id: server.id.clone(),
-            server_name: server.name.clone(),
+            log_entry_id: entry.id.clone(),
+            server_name: entry.name.clone(),
             status_code,
             message: format!("连接失败，HTTP {status_code}"),
             file_count: 0,
@@ -97,26 +101,16 @@ pub async fn test_connection(server: &ServerConfig, credentials: &AuthConfig, lo
 
     Ok(ConnectionCheckResult {
         ok: true,
-        server_id: server.id.clone(),
-        server_name: server.name.clone(),
+        log_entry_id: entry.id.clone(),
+        server_name: entry.name.clone(),
         status_code,
         message: match file_size {
             Some(size) => format!("连接成功，文件大小 {}", format_bytes(size)),
-            None => format!("连接成功，HTTP {status_code}，未返回文件大小"),
+            None => format!("连接成功，HTTP {status_code}"),
         },
         file_count: 1,
         file_size,
     })
-}
-
-fn build_test_url(base_url: &str, log_type: &str) -> AppResult<Url> {
-    let base = Url::parse(base_url)?;
-    let test_url = if base.path().ends_with('/') {
-        base.join(&format!("{log_type}.log"))?
-    } else {
-        base
-    };
-    Ok(test_url)
 }
 
 fn format_bytes(bytes: u64) -> String {

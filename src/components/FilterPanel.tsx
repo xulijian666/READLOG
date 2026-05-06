@@ -2,25 +2,25 @@ import { Download, Search, XCircle } from "lucide-react";
 import { invoke, saveDialog } from "../lib/runtime";
 import { useQueryStore } from "../store/queryStore";
 import { useQuery } from "../hooks/useQuery";
-import type { ServerConfig } from "../types/query";
+import type { LogEntry } from "../types/query";
 import { FileSelector } from "./FileSelector";
 
 interface Props {
-  servers: ServerConfig[];
+  logEntries: LogEntry[];
   batchSize: number;
 }
 
-export function FilterPanel({ servers, batchSize }: Props) {
+export function FilterPanel({ logEntries, batchSize }: Props) {
   const query = useQueryStore();
   const { execute, cancel } = useQuery();
-  const enabledServers = servers.filter((server) => server.enabled);
+  const enabledEntries = logEntries.filter((entry) => entry.enabled);
 
   const downloadOriginal = async () => {
-    const server = enabledServers[0];
-    if (!server) return;
+    const entry = enabledEntries[0];
+    if (!entry) return;
     const outputPath = await saveDialog({ defaultPath: query.filePath });
     if (!outputPath) return;
-    await invoke("download_original_file", { serverId: server.id, filePath: query.filePath, outputPath });
+    await invoke("download_original_file", { logEntryId: entry.id, filePath: query.filePath, outputPath });
   };
 
   return (
@@ -31,13 +31,13 @@ export function FilterPanel({ servers, batchSize }: Props) {
           className="inline-flex items-center gap-2 rounded-md border border-[#cfd8e6] px-3 py-2 text-sm hover:bg-[#eef3f8] disabled:opacity-50"
           type="button"
           onClick={() => void downloadOriginal()}
-          disabled={!enabledServers.length || !query.filePath}
+          disabled={!enabledEntries.length || !query.filePath}
         >
           <Download size={16} /> 下载原文件
         </button>
       </div>
       <div className="grid gap-4" style={{ gridTemplateColumns: "1.2fr 1fr 1fr 0.8fr auto" }}>
-        <FileSelector servers={servers} />
+        <FileSelector logEntries={logEntries} />
         <label className="text-sm font-medium">
           开始时间
           <input
@@ -74,8 +74,8 @@ export function FilterPanel({ servers, batchSize }: Props) {
           <button
             className="inline-flex items-center gap-2 rounded-md bg-[#10b981] px-4 py-2.5 font-medium text-white hover:bg-[#059669] disabled:opacity-50"
             type="button"
-            onClick={() => void execute(servers, batchSize)}
-            disabled={!enabledServers.length || query.running}
+            onClick={() => void execute(logEntries, batchSize)}
+            disabled={!enabledEntries.length || query.running}
           >
             <Search size={17} /> 搜索
           </button>

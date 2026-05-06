@@ -2,7 +2,7 @@ import type { LogEvent, LogLevel } from "./log";
 
 export interface QueryRequest {
   queryId: string;
-  serverIds: string[];
+  logEntryIds: string[];
   filePath: string;
   startTime: string | null;
   endTime: string | null;
@@ -28,6 +28,18 @@ export interface QueryResultEvent {
   isLastBatch: boolean;
 }
 
+export interface LogEntry {
+  id: string;
+  name: string;
+  path: string;
+  logFile: string;
+  visible: boolean;
+  enabled: boolean;
+  displayOrder: number;
+  groupId: string;
+  groupName: string;
+}
+
 export interface ServerConfig {
   id: string;
   name: string;
@@ -37,7 +49,8 @@ export interface ServerConfig {
 }
 
 export interface AppConfig {
-  servers: ServerConfig[];
+  baseUrl: string;
+  logEntries: LogEntry[];
   credentials: {
     username: string;
     password: string;
@@ -46,7 +59,6 @@ export interface AppConfig {
     maxConcurrentServers: number;
     defaultBatchSize: number;
     defaultLevel: LogLevel;
-    logType: string;
     downloadPath: string;
   };
 }
@@ -59,7 +71,7 @@ export interface DirEntry {
 
 export interface ConnectionCheckResult {
   ok: boolean;
-  serverId: string;
+  logEntryId: string;
   serverName: string;
   statusCode: number;
   message: string;

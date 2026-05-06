@@ -9,6 +9,27 @@ use crate::error::{AppError, AppResult};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LogEntry {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    #[serde(default = "default_log_file")]
+    pub log_file: String,
+    pub visible: bool,
+    pub enabled: bool,
+    pub display_order: usize,
+    #[serde(default)]
+    pub group_id: String,
+    #[serde(default)]
+    pub group_name: String,
+}
+
+fn default_log_file() -> String {
+    "app.log".to_string()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ServerConfig {
     pub id: String,
     pub name: String,
@@ -34,55 +55,66 @@ pub struct Settings {
     pub max_concurrent_servers: usize,
     pub default_batch_size: usize,
     pub default_level: String,
-    #[serde(default = "default_log_type")]
-    pub log_type: String,
     #[serde(default)]
     pub download_path: String,
-}
-
-fn default_log_type() -> String {
-    "app".to_string()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
-    pub servers: Vec<ServerConfig>,
+    #[serde(default = "default_base_url")]
+    pub base_url: String,
+    #[serde(default)]
+    pub log_entries: Vec<LogEntry>,
     #[serde(default)]
     pub credentials: AuthConfig,
     pub settings: Settings,
+    // Legacy field for migration
+    #[serde(default, skip_serializing)]
+    pub servers: Vec<ServerConfig>,
+}
+
+fn default_base_url() -> String {
+    "http://10.142.149.25:61000/".to_string()
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            servers: vec![
-                ServerConfig {
+            base_url: default_base_url(),
+            log_entries: vec![
+                LogEntry {
                     id: Uuid::new_v4().to_string(),
                     name: "SIT-124".to_string(),
-                    base_url: "http://10.142.149.25:61000/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.124/".to_string(),
-                    username: "cgisteam".to_string(),
-                    password: String::new(),
+                    path: "/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.124/".to_string(),
+                    log_file: "app.log".to_string(),
+                    visible: true,
                     enabled: true,
                     display_order: 0,
+                    group_id: String::new(),
+                    group_name: String::new(),
                 },
-                ServerConfig {
+                LogEntry {
                     id: Uuid::new_v4().to_string(),
                     name: "SIT-186".to_string(),
-                    base_url: "http://10.142.149.25:61000/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.186/".to_string(),
-                    username: "cgisteam".to_string(),
-                    password: String::new(),
+                    path: "/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.186/".to_string(),
+                    log_file: "app.log".to_string(),
+                    visible: true,
                     enabled: true,
                     display_order: 1,
+                    group_id: String::new(),
+                    group_name: String::new(),
                 },
-                ServerConfig {
+                LogEntry {
                     id: Uuid::new_v4().to_string(),
                     name: "SIT-50".to_string(),
-                    base_url: "http://10.142.149.25:61000/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.50/".to_string(),
-                    username: "cgisteam".to_string(),
-                    password: String::new(),
+                    path: "/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.50/".to_string(),
+                    log_file: "app.log".to_string(),
+                    visible: true,
                     enabled: false,
                     display_order: 2,
+                    group_id: String::new(),
+                    group_name: String::new(),
                 },
             ],
             credentials: AuthConfig {
@@ -93,9 +125,9 @@ impl Default for AppConfig {
                 max_concurrent_servers: 3,
                 default_batch_size: 500,
                 default_level: "ALL".to_string(),
-                log_type: "app".to_string(),
                 download_path: String::new(),
             },
+            servers: Vec::new(),
         }
     }
 }
@@ -115,13 +147,40 @@ pub async fn load_config() -> AppResult<AppConfig> {
 
     let text = fs::read_to_string(path).await?;
     let mut config: AppConfig = serde_json::from_str(&text)?;
+
+    // Migrate legacy servers to log_entries
+    if config.log_entries.is_empty() && !config.servers.is_empty() {
+        // Extract base_url from first server URL
+        if let Some(first) = config.servers.first() {
+            if config.base_url.is_empty() {
+                config.base_url = extract_base_url(&first.base_url);
+            }
+        }
+        for (i, server) in config.servers.iter().enumerate() {
+            let path = extract_path_from_url(&server.base_url, &config.base_url);
+            config.log_entries.push(LogEntry {
+                id: server.id.clone(),
+                name: server.name.clone(),
+                path,
+                log_file: "app.log".to_string(),
+                visible: true,
+                enabled: server.enabled,
+                display_order: i,
+                group_id: String::new(),
+                group_name: String::new(),
+            });
+        }
+        config.servers.clear();
+    }
+
+    // Migrate credentials from legacy per-server
     if config.credentials.username.is_empty() {
-        if let Some(server) = config.servers.iter().find(|server| !server.username.is_empty()) {
+        if let Some(server) = config.servers.iter().find(|s| !s.username.is_empty()) {
             config.credentials.username = server.username.clone();
         }
     }
     if config.credentials.password.is_empty() {
-        if let Some(server) = config.servers.iter().find(|server| !server.password.is_empty()) {
+        if let Some(server) = config.servers.iter().find(|s| !s.password.is_empty()) {
             config.credentials.password = server.password.clone();
         }
     }
@@ -131,12 +190,43 @@ pub async fn load_config() -> AppResult<AppConfig> {
     Ok(config)
 }
 
-pub async fn save_config(mut config: AppConfig) -> AppResult<AppConfig> {
-    for server in &mut config.servers {
-        if !server.base_url.ends_with('/') {
-            server.base_url.push('/');
+fn extract_base_url(url: &str) -> String {
+    // Try to extract http://host:port/ from a full URL
+    if let Ok(parsed) = url::Url::parse(url) {
+        let scheme = parsed.scheme();
+        let host = parsed.host_str().unwrap_or("");
+        let port = parsed.port().map(|p| format!(":{p}")).unwrap_or_default();
+        return format!("{scheme}://{host}{port}/");
+    }
+    String::new()
+}
+
+fn extract_path_from_url(full_url: &str, base_url: &str) -> String {
+    if let (Ok(base), Ok(full)) = (url::Url::parse(base_url), url::Url::parse(full_url)) {
+        let base_path = base.path().trim_end_matches('/');
+        let full_path = full.path();
+        if full_path.starts_with(base_path) {
+            let relative = &full_path[base_path.len()..];
+            if !relative.starts_with('/') {
+                return format!("/{relative}");
+            }
+            return relative.to_string();
         }
-        validate_log_url(&server.base_url)?;
+        return full_path.to_string();
+    }
+    String::new()
+}
+
+pub async fn save_config(mut config: AppConfig) -> AppResult<AppConfig> {
+    if !config.base_url.ends_with('/') {
+        config.base_url.push('/');
+    }
+    validate_log_url(&config.base_url)?;
+
+    for entry in &mut config.log_entries {
+        if !entry.path.ends_with('/') {
+            entry.path.push('/');
+        }
     }
 
     let path = config_path()?;
@@ -148,6 +238,9 @@ pub async fn save_config(mut config: AppConfig) -> AppResult<AppConfig> {
     if !config.credentials.password.is_empty() && !config.credentials.password.starts_with("encrypted:") {
         config.credentials.password = protect_password(&config.credentials.password)?;
     }
+
+    // Clear legacy servers before saving
+    config.servers.clear();
 
     let text = serde_json::to_string_pretty(&config)?;
     fs::write(path, text).await?;
@@ -162,9 +255,29 @@ pub fn validate_log_url(value: &str) -> AppResult<()> {
     Ok(())
 }
 
+pub fn build_full_url(base_url: &str, path: &str, log_file: &str) -> AppResult<String> {
+    let base = base_url.trim_end_matches('/');
+    let path = path.trim_matches('/');
+    let full = if path.is_empty() {
+        format!("{base}/{log_file}")
+    } else {
+        format!("{base}/{path}/{log_file}")
+    };
+    Ok(full)
+}
+
+/// Extract log type from log_file name for archive URL construction
+/// e.g. "app.log" -> "app", "server.log.gz" -> "server"
+pub fn extract_log_type(log_file: &str) -> String {
+    let s = log_file;
+    let s = s.strip_suffix(".gz").unwrap_or(s);
+    let s = s.strip_suffix(".log").unwrap_or(s);
+    s.to_string()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::validate_log_url;
+    use super::{extract_log_type, validate_log_url};
 
     #[test]
     fn accepts_http_url() {
@@ -176,5 +289,13 @@ mod tests {
     fn rejects_non_http_url() {
         let error = validate_log_url("ftp://host/path").unwrap_err();
         assert!(error.to_string().contains("http"));
+    }
+
+    #[test]
+    fn extracts_log_type() {
+        assert_eq!(extract_log_type("app.log"), "app");
+        assert_eq!(extract_log_type("app.log.gz"), "app");
+        assert_eq!(extract_log_type("server.log"), "server");
+        assert_eq!(extract_log_type("server.log.gz"), "server");
     }
 }

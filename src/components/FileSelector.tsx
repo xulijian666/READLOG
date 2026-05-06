@@ -2,23 +2,23 @@ import { RefreshCcw } from "lucide-react";
 import { invoke } from "../lib/runtime";
 import { useState } from "react";
 import { useQueryStore } from "../store/queryStore";
-import type { DirEntry, ServerConfig } from "../types/query";
+import type { DirEntry, LogEntry } from "../types/query";
 
 interface Props {
-  servers: ServerConfig[];
+  logEntries: LogEntry[];
 }
 
-export function FileSelector({ servers }: Props) {
+export function FileSelector({ logEntries }: Props) {
   const { filePath, setFilter } = useQueryStore();
   const [files, setFiles] = useState<DirEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  const enabled = servers.find((server) => server.enabled);
+  const enabled = logEntries.find((entry) => entry.enabled);
 
   const refresh = async () => {
     if (!enabled) return;
     setLoading(true);
     try {
-      const entries = await invoke<DirEntry[]>("list_directory", { serverId: enabled.id });
+      const entries = await invoke<DirEntry[]>("list_directory", { logEntryId: enabled.id });
       setFiles(entries.filter((entry) => !entry.isDir));
     } finally {
       setLoading(false);

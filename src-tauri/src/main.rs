@@ -1,6 +1,6 @@
 use read_log::{
     config::{load_config, save_config, AppConfig},
-    directory::{test_connection, ConnectionCheckResult},
+    directory::{test_log_entry_connection, ConnectionCheckResult},
     download::{download_realtime_logs as do_download_realtime_logs, download_archive_logs as do_download_archive_logs, download_tail_logs as do_download_tail_logs, DownloadSummary},
     error::AppError,
 };
@@ -22,50 +22,46 @@ async fn save_app_config(config: AppConfig) -> Result<AppConfig, AppError> {
 }
 
 #[tauri::command]
-async fn test_all_connections(server_ids: Vec<String>) -> Result<Vec<ConnectionCheckResult>, AppError> {
+async fn test_all_connections(log_entry_ids: Vec<String>) -> Result<Vec<ConnectionCheckResult>, AppError> {
     let config = load_config().await?;
     if config.credentials.username.trim().is_empty() {
         return Err(AppError::Message("请先填写统一用户名".to_string()));
     }
-    let log_type = config.settings.log_type.clone();
     let mut results = Vec::new();
-    for server in config
-        .servers
+    for entry in config
+        .log_entries
         .iter()
-        .filter(|server| server_ids.is_empty() || server_ids.contains(&server.id))
+        .filter(|entry| log_entry_ids.is_empty() || log_entry_ids.contains(&entry.id))
     {
-        results.push(test_connection(server, &config.credentials, &log_type).await?);
+        results.push(test_log_entry_connection(&config.base_url, &config.credentials, entry).await?);
     }
     Ok(results)
 }
 
 #[tauri::command]
 async fn download_realtime_logs(
-    server_ids: Vec<String>,
-    log_type: String,
+    log_entry_ids: Vec<String>,
     output_path: String,
 ) -> Result<DownloadSummary, AppError> {
     let config = load_config().await?;
     if config.credentials.username.trim().is_empty() {
         return Err(AppError::Message("请先填写统一用户名".to_string()));
     }
-    let servers: Vec<_> = config
-        .servers
+    let entries: Vec<_> = config
+        .log_entries
         .iter()
-        .filter(|server| server.enabled && server_ids.contains(&server.id))
-        .cloned()
+        .filter(|entry| entry.enabled && log_entry_ids.contains(&entry.id))
         .collect();
-    if servers.is_empty() {
-        return Err(AppError::Message("请至少勾选一条服务器".to_string()));
+    if entries.is_empty() {
+        return Err(AppError::Message("请至少勾选一条日志".to_string()));
     }
     let effective_path = if output_path.is_empty() { &config.settings.download_path } else { &output_path };
-    do_download_realtime_logs(&servers, &config.credentials, &log_type, effective_path).await
+    do_download_realtime_logs(&config.base_url, &entries, &config.credentials, effective_path).await
 }
 
 #[tauri::command]
 async fn download_archive_logs(
-    server_ids: Vec<String>,
-    log_type: String,
+    log_entry_ids: Vec<String>,
     month: String,
     day: String,
     hour_start: String,
@@ -76,25 +72,23 @@ async fn download_archive_logs(
     if config.credentials.username.trim().is_empty() {
         return Err(AppError::Message("请先填写统一用户名".to_string()));
     }
-    let servers: Vec<_> = config
-        .servers
+    let entries: Vec<_> = config
+        .log_entries
         .iter()
-        .filter(|server| server.enabled && server_ids.contains(&server.id))
-        .cloned()
+        .filter(|entry| entry.enabled && log_entry_ids.contains(&entry.id))
         .collect();
-    if servers.is_empty() {
-        return Err(AppError::Message("请至少勾选一条服务器".to_string()));
+    if entries.is_empty() {
+        return Err(AppError::Message("请至少勾选一条日志".to_string()));
     }
     let start: u32 = hour_start.parse().map_err(|_| AppError::Message("起始小时格式错误".to_string()))?;
     let end: u32 = hour_end.parse().map_err(|_| AppError::Message("结束小时格式错误".to_string()))?;
     let effective_path = if output_path.is_empty() { &config.settings.download_path } else { &output_path };
-    do_download_archive_logs(&servers, &config.credentials, &log_type, &month, &day, start, end, effective_path).await
+    do_download_archive_logs(&config.base_url, &entries, &config.credentials, &month, &day, start, end, effective_path).await
 }
 
 #[tauri::command]
 async fn download_tail_logs(
-    server_ids: Vec<String>,
-    log_type: String,
+    log_entry_ids: Vec<String>,
     line_count: String,
     output_path: String,
 ) -> Result<DownloadSummary, AppError> {
@@ -102,21 +96,20 @@ async fn download_tail_logs(
     if config.credentials.username.trim().is_empty() {
         return Err(AppError::Message("请先填写统一用户名".to_string()));
     }
-    let servers: Vec<_> = config
-        .servers
+    let entries: Vec<_> = config
+        .log_entries
         .iter()
-        .filter(|server| server.enabled && server_ids.contains(&server.id))
-        .cloned()
+        .filter(|entry| entry.enabled && log_entry_ids.contains(&entry.id))
         .collect();
-    if servers.is_empty() {
-        return Err(AppError::Message("请至少勾选一条服务器".to_string()));
+    if entries.is_empty() {
+        return Err(AppError::Message("请至少勾选一条日志".to_string()));
     }
     let count: usize = line_count.parse().map_err(|_| AppError::Message("行数格式错误".to_string()))?;
     if count == 0 {
         return Err(AppError::Message("行数必须大于 0".to_string()));
     }
     let effective_path = if output_path.is_empty() { &config.settings.download_path } else { &output_path };
-    do_download_tail_logs(&servers, &config.credentials, &log_type, count, effective_path).await
+    do_download_tail_logs(&config.base_url, &entries, &config.credentials, count, effective_path).await
 }
 
 #[tauri::command]

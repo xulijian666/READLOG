@@ -1,6 +1,6 @@
 import { invoke, isTauriRuntime } from "../lib/runtime";
 import { useQueryStore } from "../store/queryStore";
-import type { QueryRequest, ServerConfig } from "../types/query";
+import type { QueryRequest, LogEntry } from "../types/query";
 
 function toRfc3339(value: string) {
   if (!value) return null;
@@ -10,7 +10,7 @@ function toRfc3339(value: string) {
 export function useQuery() {
   const query = useQueryStore();
 
-  const execute = async (servers: ServerConfig[], batchSize: number) => {
+  const execute = async (logEntries: LogEntry[], batchSize: number) => {
     if (query.running && query.queryId) {
       await invoke("cancel_query", { queryId: query.queryId });
     }
@@ -18,7 +18,7 @@ export function useQuery() {
     const queryId = crypto.randomUUID();
     const request: QueryRequest = {
       queryId,
-      serverIds: servers.filter((server) => server.enabled).map((server) => server.id),
+      logEntryIds: logEntries.filter((entry) => entry.enabled).map((entry) => entry.id),
       filePath: query.filePath,
       startTime: toRfc3339(query.startTime),
       endTime: toRfc3339(query.endTime),
@@ -31,15 +31,15 @@ export function useQuery() {
     query.setQueryId(queryId);
     query.setRunning(true);
     if (!isTauriRuntime()) {
-      const enabled = servers.filter((server) => server.enabled);
+      const enabled = logEntries.filter((entry) => entry.enabled);
       const now = new Date().toISOString();
       query.setEvents(
-        enabled.flatMap((server, index) => [
+        enabled.flatMap((entry, index) => [
           {
-            id: `${server.id}:1`,
-            serverId: server.id,
-            serverName: server.name,
-            serverDisplayOrder: server.displayOrder,
+            id: `${entry.id}:1`,
+            serverId: entry.id,
+            serverName: entry.name,
+            serverDisplayOrder: entry.displayOrder,
             lineOffset: 1,
             timestamp: now,
             level: index % 2 === 0 ? "INFO" : "WARN",
@@ -59,7 +59,7 @@ export function useQuery() {
         scannedBytes: 682847,
         scannedEvents: enabled.length,
         matchedEvents: enabled.length,
-        serversCompleted: enabled.map((server) => server.id),
+        serversCompleted: enabled.map((entry) => entry.id),
         serversPending: [],
       });
       query.setRunning(false);
@@ -75,7 +75,7 @@ export function useQuery() {
         scannedEvents: 0,
         matchedEvents: 0,
         serversCompleted: [],
-        serversPending: request.serverIds,
+        serversPending: request.logEntryIds,
       });
       query.setRunning(false);
     }

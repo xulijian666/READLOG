@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "../lib/runtime";
-import type { AppConfig, ServerConfig } from "../types/query";
+import type { AppConfig, LogEntry } from "../types/query";
 
 interface ServerState {
   config: AppConfig | null;
@@ -8,9 +8,13 @@ interface ServerState {
   error: string | null;
   load: () => Promise<void>;
   save: (config: AppConfig) => Promise<void>;
-  upsertServer: (server: ServerConfig) => Promise<void>;
-  deleteServer: (serverId: string) => Promise<void>;
-  toggleServer: (serverId: string) => Promise<void>;
+  upsertLogEntry: (entry: LogEntry) => Promise<void>;
+  deleteLogEntry: (entryId: string) => Promise<void>;
+  toggleLogEntry: (entryId: string) => Promise<void>;
+  toggleLogEntryVisible: (entryId: string) => Promise<void>;
+  toggleGroup: (groupId: string) => Promise<void>;
+  toggleGroupVisible: (groupId: string) => Promise<void>;
+  deleteGroup: (groupId: string) => Promise<void>;
 }
 
 export const useServerStore = create<ServerState>((set, get) => ({
@@ -35,29 +39,65 @@ export const useServerStore = create<ServerState>((set, get) => ({
       set({ error: String(error), loading: false });
     }
   },
-  upsertServer: async (server) => {
+  upsertLogEntry: async (entry) => {
     const config = get().config;
     if (!config) return;
-    const exists = config.servers.some((item) => item.id === server.id);
-    const servers = exists
-      ? config.servers.map((item) => (item.id === server.id ? server : item))
-      : [...config.servers, { ...server, displayOrder: config.servers.length }];
-    await get().save({ ...config, servers });
+    const exists = config.logEntries.some((item) => item.id === entry.id);
+    const logEntries = exists
+      ? config.logEntries.map((item) => (item.id === entry.id ? entry : item))
+      : [...config.logEntries, { ...entry, displayOrder: config.logEntries.length }];
+    await get().save({ ...config, logEntries });
   },
-  deleteServer: async (serverId) => {
+  deleteLogEntry: async (entryId) => {
     const config = get().config;
     if (!config) return;
-    const servers = config.servers
-      .filter((server) => server.id !== serverId)
-      .map((server, displayOrder) => ({ ...server, displayOrder }));
-    await get().save({ ...config, servers });
+    const logEntries = config.logEntries
+      .filter((entry) => entry.id !== entryId)
+      .map((entry, displayOrder) => ({ ...entry, displayOrder }));
+    await get().save({ ...config, logEntries });
   },
-  toggleServer: async (serverId) => {
+  toggleLogEntry: async (entryId) => {
     const config = get().config;
     if (!config) return;
-    const servers = config.servers.map((server) =>
-      server.id === serverId ? { ...server, enabled: !server.enabled } : server,
+    const logEntries = config.logEntries.map((entry) =>
+      entry.id === entryId ? { ...entry, enabled: !entry.enabled } : entry,
     );
-    await get().save({ ...config, servers });
+    await get().save({ ...config, logEntries });
+  },
+  toggleLogEntryVisible: async (entryId) => {
+    const config = get().config;
+    if (!config) return;
+    const logEntries = config.logEntries.map((entry) =>
+      entry.id === entryId ? { ...entry, visible: !entry.visible } : entry,
+    );
+    await get().save({ ...config, logEntries });
+  },
+  toggleGroup: async (groupId) => {
+    const config = get().config;
+    if (!config) return;
+    const groupEntries = config.logEntries.filter((e) => e.groupId === groupId);
+    const allEnabled = groupEntries.length > 0 && groupEntries.every((e) => e.enabled);
+    const logEntries = config.logEntries.map((entry) =>
+      entry.groupId === groupId ? { ...entry, enabled: !allEnabled } : entry,
+    );
+    await get().save({ ...config, logEntries });
+  },
+  toggleGroupVisible: async (groupId) => {
+    const config = get().config;
+    if (!config) return;
+    const groupEntries = config.logEntries.filter((e) => e.groupId === groupId);
+    const allVisible = groupEntries.length > 0 && groupEntries.every((e) => e.visible);
+    const logEntries = config.logEntries.map((entry) =>
+      entry.groupId === groupId ? { ...entry, visible: !allVisible } : entry,
+    );
+    await get().save({ ...config, logEntries });
+  },
+  deleteGroup: async (groupId) => {
+    const config = get().config;
+    if (!config) return;
+    const logEntries = config.logEntries
+      .filter((entry) => entry.groupId !== groupId)
+      .map((entry, displayOrder) => ({ ...entry, displayOrder }));
+    await get().save({ ...config, logEntries });
   },
 }));

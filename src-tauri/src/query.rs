@@ -9,7 +9,7 @@ use tokio::sync::{mpsc, Mutex, Semaphore};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::config::{load_config, AuthConfig, ServerConfig};
+use crate::config::{build_full_url, load_config, AuthConfig, LogEntry};
 use crate::error::{AppError, AppResult};
 use crate::filter::QueryFilter;
 use crate::parser::{LogEvent, ServerContext};
@@ -24,7 +24,7 @@ pub struct QueryRegistry {
 #[serde(rename_all = "camelCase")]
 pub struct QueryRequest {
     pub query_id: String,
-    pub server_ids: Vec<String>,
+    pub log_entry_ids: Vec<String>,
     pub file_path: String,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
@@ -126,15 +126,15 @@ async fn run_query(app: AppHandle, request: QueryRequest, token: CancellationTok
     if config.credentials.username.trim().is_empty() {
         return Err(AppError::Message("请先填写统一用户名".to_string()));
     }
-    let selected: Vec<ServerConfig> = config
-        .servers
+    let selected: Vec<LogEntry> = config
+        .log_entries
         .into_iter()
-        .filter(|server| server.enabled && request.server_ids.contains(&server.id))
+        .filter(|entry| entry.enabled && request.log_entry_ids.contains(&entry.id))
         .collect();
     if selected.is_empty() {
-        return Err(AppError::Message("请至少启用一台服务器".to_string()));
+        return Err(AppError::Message("请至少启用一条日志".to_string()));
     }
-    let pending: HashSet<String> = selected.iter().map(|server| server.id.clone()).collect();
+    let pending: HashSet<String> = selected.iter().map(|entry| entry.id.clone()).collect();
     let semaphore = Arc::new(Semaphore::new(config.settings.max_concurrent_servers.max(1)));
     let filter = Arc::new(QueryFilter {
         start_time: parse_optional_datetime(request.start_time.as_deref())?,
@@ -145,17 +145,20 @@ async fn run_query(app: AppHandle, request: QueryRequest, token: CancellationTok
     let batch_size = request.batch_size.max(1);
 
     let (tx, mut rx) = mpsc::unbounded_channel();
-    for server in selected {
+    let base_url = config.base_url.clone();
+    for entry in selected {
         let permit = semaphore.clone().acquire_owned().await.expect("semaphore closed");
         let filter = filter.clone();
         let file_path = request.file_path.clone();
         let token = token.child_token();
         let tx = tx.clone();
         let credentials = config.credentials.clone();
+        let base_url = base_url.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            let result = query_server(
-                server,
+            let result = query_entry(
+                &base_url,
+                entry,
                 credentials,
                 &file_path,
                 (*filter).clone(),
@@ -260,8 +263,9 @@ async fn run_query(app: AppHandle, request: QueryRequest, token: CancellationTok
     Ok(())
 }
 
-async fn query_server(
-    server: ServerConfig,
+async fn query_entry(
+    base_url: &str,
+    entry: LogEntry,
     credentials: AuthConfig,
     file_path: &str,
     filter: QueryFilter,
@@ -269,8 +273,9 @@ async fn query_server(
     token: CancellationToken,
     tx: mpsc::UnboundedSender<Result<ServerMessage, AppError>>,
 ) -> AppResult<()> {
-    let server_id = server.id.clone();
-    let url = Url::parse(&server.base_url)?.join(file_path)?;
+    let server_id = entry.id.clone();
+    let full_url = build_full_url(base_url, &entry.path, &entry.log_file)?;
+    let url = Url::parse(&full_url)?.join(file_path)?;
     let password = crate::crypto::reveal_password(&credentials.password)?;
     let response = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -282,9 +287,9 @@ async fn query_server(
         .error_for_status()?;
 
     let context = ServerContext {
-        id: server.id,
-        name: server.name,
-        display_order: server.display_order,
+        id: entry.id,
+        name: entry.name,
+        display_order: entry.display_order,
     };
     let mut reader = LogStreamReader::with_current_year(context, filter, batch_size);
     let mut stream = response.bytes_stream();
