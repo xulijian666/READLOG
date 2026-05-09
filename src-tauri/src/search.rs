@@ -12,10 +12,24 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{build_full_url, load_config, AuthConfig, LogEntry};
 use crate::error::{AppError, AppResult};
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SearchMatchMode {
+    Phrase,
+    All,
+    Any,
+}
+
+fn default_match_mode() -> SearchMatchMode {
+    SearchMatchMode::Phrase
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchOptions {
     pub keyword: String,
+    #[serde(default = "default_match_mode")]
+    pub match_mode: SearchMatchMode,
     pub case_sensitive: bool,
     pub before_lines: usize,
     pub after_lines: usize,
@@ -40,6 +54,8 @@ pub struct LogSearchRequest {
     pub query_id: String,
     pub log_entry_ids: Vec<String>,
     pub keyword: String,
+    #[serde(default = "default_match_mode")]
+    pub match_mode: SearchMatchMode,
     pub case_sensitive: bool,
     pub before_lines: usize,
     pub after_lines: usize,
@@ -179,12 +195,36 @@ impl LineSearcher {
         if keyword.is_empty() {
             return false;
         }
+        let line = normalize_for_match(line, self.options.case_sensitive);
         if self.options.case_sensitive {
-            line.contains(keyword)
+            match_keywords(&line, keyword, self.options.match_mode)
         } else {
-            line.to_lowercase().contains(&keyword.to_lowercase())
+            match_keywords(&line, &keyword.to_lowercase(), self.options.match_mode)
         }
     }
+}
+
+fn normalize_for_match(value: &str, case_sensitive: bool) -> String {
+    if case_sensitive {
+        value.to_string()
+    } else {
+        value.to_lowercase()
+    }
+}
+
+fn match_keywords(line: &str, keyword: &str, mode: SearchMatchMode) -> bool {
+    match mode {
+        SearchMatchMode::Phrase => line.contains(keyword),
+        SearchMatchMode::All => {
+            let parts = split_keywords(keyword);
+            !parts.is_empty() && parts.iter().all(|part| line.contains(part))
+        }
+        SearchMatchMode::Any => split_keywords(keyword).iter().any(|part| line.contains(part)),
+    }
+}
+
+fn split_keywords(keyword: &str) -> Vec<&str> {
+    keyword.split_whitespace().filter(|part| !part.is_empty()).collect()
 }
 
 fn build_hit(options: &SearchOptions, pending: PendingHit) -> SearchHit {
@@ -291,6 +331,7 @@ async fn run_log_search(app: AppHandle, request: LogSearchRequest, token: Cancel
 
     let options = SearchOptions {
         keyword: request.keyword.clone(),
+        match_mode: request.match_mode,
         case_sensitive: request.case_sensitive,
         before_lines: request.before_lines.min(50),
         after_lines: request.after_lines.min(50),
@@ -566,6 +607,7 @@ mod tests {
         ];
         let options = SearchOptions {
             keyword: "needle".to_string(),
+            match_mode: SearchMatchMode::Phrase,
             case_sensitive: false,
             before_lines: 2,
             after_lines: 2,
@@ -588,6 +630,7 @@ mod tests {
         let lines = ["Needle", "needle"];
         let options = SearchOptions {
             keyword: "Needle".to_string(),
+            match_mode: SearchMatchMode::Phrase,
             case_sensitive: true,
             before_lines: 1,
             after_lines: 1,
@@ -606,6 +649,7 @@ mod tests {
         let lines = ["needle 1", "needle 2", "needle 3"];
         let options = SearchOptions {
             keyword: "needle".to_string(),
+            match_mode: SearchMatchMode::Phrase,
             case_sensitive: false,
             before_lines: 0,
             after_lines: 0,
@@ -616,5 +660,63 @@ mod tests {
         let hits = search_lines_for_test(&lines, &options);
 
         assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn phrase_mode_matches_the_whole_keyword_text() {
+        let lines = ["aaa middle bbb", "aaa bbb"];
+        let options = SearchOptions {
+            keyword: "aaa bbb".to_string(),
+            match_mode: SearchMatchMode::Phrase,
+            case_sensitive: false,
+            before_lines: 0,
+            after_lines: 0,
+            detail_context_lines: 0,
+            max_results: 10,
+        };
+
+        let hits = search_lines_for_test(&lines, &options);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].line_number, 2);
+    }
+
+    #[test]
+    fn all_mode_requires_every_keyword_on_the_same_line() {
+        let lines = ["aaa only", "bbb only", "aaa middle bbb", "ccc aaa"];
+        let options = SearchOptions {
+            keyword: "aaa bbb".to_string(),
+            match_mode: SearchMatchMode::All,
+            case_sensitive: false,
+            before_lines: 0,
+            after_lines: 0,
+            detail_context_lines: 0,
+            max_results: 10,
+        };
+
+        let hits = search_lines_for_test(&lines, &options);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].line_number, 3);
+    }
+
+    #[test]
+    fn any_mode_matches_when_one_keyword_is_present() {
+        let lines = ["aaa only", "no match", "bbb only", "ccc"];
+        let options = SearchOptions {
+            keyword: "aaa bbb".to_string(),
+            match_mode: SearchMatchMode::Any,
+            case_sensitive: false,
+            before_lines: 0,
+            after_lines: 0,
+            detail_context_lines: 0,
+            max_results: 10,
+        };
+
+        let hits = search_lines_for_test(&lines, &options);
+
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].line_number, 1);
+        assert_eq!(hits[1].line_number, 3);
     }
 }

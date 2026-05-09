@@ -4,30 +4,72 @@ import { invoke, listen } from "../lib/runtime";
 import { useServerStore } from "../store/serverStore";
 import type { LogSearchHit, LogSearchProgressEvent, LogSearchRequest, LogSearchResultEvent } from "../types/query";
 
+type MatchMode = LogSearchRequest["matchMode"];
+
+const matchModeLabels: Record<MatchMode, string> = {
+  phrase: "完整匹配",
+  all: "包含全部",
+  any: "包含任一",
+};
+
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function highlightLine(line: string, keyword: string, caseSensitive: boolean) {
+function highlightLine(line: string, keyword: string, caseSensitive: boolean, matchMode: MatchMode) {
   if (!keyword.trim()) return line;
   const source = caseSensitive ? line : line.toLowerCase();
-  const needle = caseSensitive ? keyword : keyword.toLowerCase();
-  const index = source.indexOf(needle);
-  if (index < 0) return line;
+  const needles = matchMode === "phrase"
+    ? [caseSensitive ? keyword : keyword.toLowerCase()]
+    : keyword.split(/\s+/).filter(Boolean).map((part) => caseSensitive ? part : part.toLowerCase());
+  const ranges = needles
+    .flatMap((needle) => {
+      const found: Array<{ start: number; end: number }> = [];
+      let startAt = 0;
+      while (needle && startAt < source.length) {
+        const index = source.indexOf(needle, startAt);
+        if (index < 0) break;
+        found.push({ start: index, end: index + needle.length });
+        startAt = index + needle.length;
+      }
+      return found;
+    })
+    .sort((left, right) => left.start - right.start)
+    .reduce<Array<{ start: number; end: number }>>((merged, range) => {
+      const previous = merged[merged.length - 1];
+      if (!previous || range.start > previous.end) merged.push(range);
+      else previous.end = Math.max(previous.end, range.end);
+      return merged;
+    }, []);
+  if (!ranges.length) return line;
   return (
     <>
-      {line.slice(0, index)}
-      <mark className="rounded bg-[#fef08a] px-0.5">{line.slice(index, index + keyword.length)}</mark>
-      {line.slice(index + keyword.length)}
+      {ranges.map((range, index) => {
+        const previousEnd = index === 0 ? 0 : ranges[index - 1].end;
+        return (
+          <span key={`${range.start}-${range.end}`}>
+            {line.slice(previousEnd, range.start)}
+            <mark className="rounded bg-[#fef08a] px-0.5">{line.slice(range.start, range.end)}</mark>
+          </span>
+        );
+      })}
+      {line.slice(ranges[ranges.length - 1].end)}
     </>
   );
+}
+
+function getMatchModeHint(mode: MatchMode) {
+  if (mode === "phrase") return "完整匹配：按输入内容整体查找。";
+  if (mode === "all") return "包含全部：按空格拆词，同一行必须全部包含。";
+  return "包含任一：按空格拆词，同一行包含任意一个即可。";
 }
 
 export function SearchPanel() {
   const config = useServerStore((state) => state.config);
   const [keyword, setKeyword] = useState("");
+  const [matchMode, setMatchMode] = useState<MatchMode>("phrase");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [beforeLines, setBeforeLines] = useState("5");
   const [maxResults, setMaxResults] = useState("500");
@@ -96,6 +138,7 @@ export function SearchPanel() {
       queryId,
       logEntryIds: enabledEntries.map((entry) => entry.id),
       keyword: trimmed,
+      matchMode,
       caseSensitive,
       beforeLines: contextCount,
       afterLines: contextCount,
@@ -130,7 +173,7 @@ export function SearchPanel() {
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-[#f5f7fb] px-5 py-5">
       <div className="rounded-lg border border-[#d9e1ec] bg-white p-5">
-        <div className="grid items-end gap-4" style={{ gridTemplateColumns: "minmax(280px, 1fr) 130px 130px auto auto" }}>
+        <div className="grid items-end gap-4" style={{ gridTemplateColumns: "minmax(300px, 1fr) 140px 130px 130px auto auto" }}>
           <label className="block text-sm font-medium text-[#243145]">
             关键词
             <input
@@ -142,6 +185,18 @@ export function SearchPanel() {
               }}
               placeholder="traceId / 订单号 / 接口 / Exception"
             />
+          </label>
+          <label className="block text-sm font-medium text-[#243145]">
+            匹配方式
+            <select
+              className="mt-1 w-full rounded-md border border-[#cfd8e6] bg-white px-3 py-2 outline-none focus:border-[#2563eb]"
+              value={matchMode}
+              onChange={(event) => setMatchMode(event.target.value as MatchMode)}
+            >
+              {(Object.keys(matchModeLabels) as MatchMode[]).map((mode) => (
+                <option key={mode} value={mode}>{matchModeLabels[mode]}</option>
+              ))}
+            </select>
           </label>
           <label className="block text-sm font-medium text-[#243145]">
             上下文行数
@@ -189,6 +244,7 @@ export function SearchPanel() {
 
         <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-[#69778c]">
           <span>查询范围：当前勾选的 {enabledEntries.length} 个单体日志 URL</span>
+          <span>{getMatchModeHint(matchMode)}</span>
           {progress && (
             <>
               <span>扫描 {formatBytes(progress.scannedBytes)}</span>
@@ -232,7 +288,7 @@ export function SearchPanel() {
                     {before.map((line, lineIndex) => (
                       <div key={`b-${lineIndex}`} className="text-[#94a3b8]">{line}</div>
                     ))}
-                    <div className="bg-[#1e3a8a] text-white">{highlightLine(result.matchedLine, keyword.trim(), caseSensitive)}</div>
+                    <div className="bg-[#1e3a8a] text-white">{highlightLine(result.matchedLine, keyword.trim(), caseSensitive, matchMode)}</div>
                     {after.map((line, lineIndex) => (
                       <div key={`a-${lineIndex}`} className="text-[#cbd5e1]">{line}</div>
                     ))}

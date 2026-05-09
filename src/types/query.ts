@@ -89,6 +89,7 @@ export interface LogSearchRequest {
   queryId: string;
   logEntryIds: string[];
   keyword: string;
+  matchMode: "phrase" | "all" | "any";
   caseSensitive: boolean;
   beforeLines: number;
   afterLines: number;
