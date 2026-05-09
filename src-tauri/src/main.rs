@@ -4,7 +4,8 @@ use read_log::{
     download::{download_realtime_logs as do_download_realtime_logs, download_archive_logs as do_download_archive_logs, download_tail_logs as do_download_tail_logs, DownloadSummary},
     error::AppError,
 };
-use serde::Serialize;
+use rust_xlsxwriter::{Workbook, Format};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
 struct AgentStatus {
@@ -210,6 +211,80 @@ fn open_folder(path: String) -> Result<(), AppError> {
     Ok(())
 }
 
+#[derive(Deserialize)]
+struct ExportEntry {
+    group_name: String,
+    name: String,
+    url: String,
+}
+
+#[tauri::command]
+async fn export_xlsx(entries: Vec<ExportEntry>, output_path: String) -> Result<(), AppError> {
+    let mut workbook = Workbook::new();
+    let worksheet = workbook.add_worksheet();
+
+    let header_fmt = Format::new().set_bold();
+    worksheet.write_string_with_format(0, 0, "分组名称", &header_fmt).map_err(|e| AppError::Message(e.to_string()))?;
+    worksheet.write_string_with_format(0, 1, "日志名称", &header_fmt).map_err(|e| AppError::Message(e.to_string()))?;
+    worksheet.write_string_with_format(0, 2, "日志URL", &header_fmt).map_err(|e| AppError::Message(e.to_string()))?;
+
+    worksheet.set_column_width(0, 20).map_err(|e| AppError::Message(e.to_string()))?;
+    worksheet.set_column_width(1, 25).map_err(|e| AppError::Message(e.to_string()))?;
+    worksheet.set_column_width(2, 80).map_err(|e| AppError::Message(e.to_string()))?;
+
+    for (i, entry) in entries.iter().enumerate() {
+        let row = (i + 1) as u32;
+        worksheet.write_string(row, 0, &entry.group_name).map_err(|e| AppError::Message(e.to_string()))?;
+        worksheet.write_string(row, 1, &entry.name).map_err(|e| AppError::Message(e.to_string()))?;
+        worksheet.write_string(row, 2, &entry.url).map_err(|e| AppError::Message(e.to_string()))?;
+    }
+
+    workbook.save(&output_path).map_err(|e| AppError::Message(e.to_string()))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn pick_directory() -> Result<Option<String>, AppError> {
+    use std::process::Command;
+
+    #[cfg(target_os = "windows")]
+    {
+        let script = r#"
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = '选择下载目录'
+$dialog.ShowNewFolderButton = $true
+if ($dialog.ShowDialog() -eq 'OK') { $dialog.SelectedPath }
+"#;
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+            .output()
+            .map_err(|e| AppError::Message(e.to_string()))?;
+
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if path.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(path))
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let output = Command::new("zenity")
+            .args(["--file-selection", "--directory", "--title=选择下载目录"])
+            .output()
+            .map_err(|e| AppError::Message(e.to_string()))?;
+
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if path.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(path))
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -224,7 +299,9 @@ fn main() {
             check_agent_status,
             copy_agent_prompt,
             open_file,
-            open_folder
+            open_folder,
+            export_xlsx,
+            pick_directory
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

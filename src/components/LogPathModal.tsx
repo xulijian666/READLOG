@@ -12,7 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { useRef, useState } from "react";
-import * as XLSX from "xlsx";
+import { exportXlsx } from "../lib/runtime";
 import { useServerStore } from "../store/serverStore";
 import type { LogEntry } from "../types/query";
 
@@ -150,15 +150,7 @@ export function LogPathModal({ onClose }: Props) {
 
   // XLSX Export
   const handleExport = () => {
-    const rows: string[][] = [["分组名称", "日志名称", "日志URL"]];
-    for (const entry of config.logEntries) {
-      rows.push([entry.groupName, entry.name, entry.path + entry.logFile]);
-    }
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{ wch: 20 }, { wch: 25 }, { wch: 80 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "日志配置");
-    XLSX.writeFile(wb, "日志路径配置.xlsx");
+    void exportXlsx(config.logEntries);
   };
 
   // XLSX Import
@@ -166,6 +158,7 @@ export function LogPathModal({ onClose }: Props) {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
+      const XLSX = await import("xlsx");
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data, { type: "array" });
       const ws = wb.Sheets[wb.SheetNames[0]];

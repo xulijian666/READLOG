@@ -389,7 +389,7 @@ export function ServerConfig() {
             className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-[#243145] hover:bg-[#f0f4ff]"
             type="button"
             onClick={() => {
-              window.open(contextMenu.dirUrl, "_blank");
+              void invoke("open_file", { path: contextMenu.dirUrl });
               setContextMenu(null);
             }}
           >

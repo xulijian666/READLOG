@@ -2,7 +2,7 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 import { save as tauriSave } from "@tauri-apps/plugin-dialog";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
-import type { AppConfig, ConnectionCheckResult, DirEntry, DownloadSummary } from "../types/query";
+import type { AppConfig, ConnectionCheckResult, DirEntry, DownloadSummary, LogEntry } from "../types/query";
 
 export function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -126,4 +126,53 @@ export async function listen<T>(event: string, handler: EventCallback<T>): Promi
   void event;
   void handler;
   return () => undefined;
+}
+
+export async function exportXlsx(entries: LogEntry[]): Promise<void> {
+  const exportEntries = entries.map((e) => ({
+    group_name: e.groupName,
+    name: e.name,
+    url: e.path + e.logFile,
+  }));
+
+  if (isTauriRuntime()) {
+    const filePath = await tauriSave({
+      defaultPath: "日志路径配置.xlsx",
+      filters: [{ name: "Excel", extensions: ["xlsx"] }],
+    });
+    if (filePath) {
+      await tauriInvoke("export_xlsx", { entries: exportEntries, outputPath: filePath });
+    }
+    return;
+  }
+
+  // Browser fallback: use SheetJS dynamically
+  const XLSX = await import("xlsx");
+  const rows: string[][] = [["分组名称", "日志名称", "日志URL"]];
+  for (const entry of entries) {
+    rows.push([entry.groupName, entry.name, entry.path + entry.logFile]);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"] = [{ wch: 20 }, { wch: 25 }, { wch: 80 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "日志配置");
+  XLSX.writeFile(wb, "日志路径配置.xlsx");
+}
+
+export async function pickDirectory(): Promise<string | null> {
+  if (isTauriRuntime()) {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const result = await open({ directory: true, title: "选择下载目录" });
+      if (result) return result;
+    } catch {
+      // Fallback to backend command
+    }
+    try {
+      return await tauriInvoke<string | null>("pick_directory");
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }

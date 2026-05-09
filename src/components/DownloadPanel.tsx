@@ -1,13 +1,7 @@
 import { Archive, Bot, Copy, Download, FileText, FolderInput, FolderOpen, Scissors } from "lucide-react";
 import { useEffect, useState } from "react";
-import { invoke, isTauriRuntime } from "../lib/runtime";
+import { invoke, pickDirectory } from "../lib/runtime";
 import { useServerStore } from "../store/serverStore";
-
-async function pickDirectory(): Promise<string | null> {
-  if (!isTauriRuntime()) return null;
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  return open({ directory: true, title: "选择下载目录" });
-}
 import type { DownloadSummary } from "../types/query";
 
 function formatBytes(bytes: number) {
