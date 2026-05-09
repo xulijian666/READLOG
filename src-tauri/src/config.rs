@@ -70,7 +70,7 @@ pub struct AppConfig {
     pub credentials: AuthConfig,
     pub settings: Settings,
     // Legacy field for migration
-    #[serde(default, skip_serializing)]
+    #[serde(default)]
     pub servers: Vec<ServerConfig>,
 }
 
@@ -146,7 +146,7 @@ pub async fn load_config() -> AppResult<AppConfig> {
     }
 
     let text = fs::read_to_string(path).await?;
-    let mut config: AppConfig = serde_json::from_str(&text)?;
+    let mut config: AppConfig = parse_config_text(&text)?;
 
     // Migrate legacy servers to log_entries
     if config.log_entries.is_empty() && !config.servers.is_empty() {
@@ -188,6 +188,11 @@ pub async fn load_config() -> AppResult<AppConfig> {
         config.credentials.password = reveal_password(&config.credentials.password)?;
     }
     Ok(config)
+}
+
+fn parse_config_text(text: &str) -> AppResult<AppConfig> {
+    let text = text.trim_start_matches('\u{feff}');
+    Ok(serde_json::from_str(text)?)
 }
 
 fn extract_base_url(url: &str) -> String {
@@ -297,5 +302,45 @@ mod tests {
         assert_eq!(extract_log_type("app.log.gz"), "app");
         assert_eq!(extract_log_type("server.log"), "server");
         assert_eq!(extract_log_type("server.log.gz"), "server");
+    }
+
+    #[test]
+    fn loads_config_without_legacy_servers_field() {
+        let text = r#"{
+          "baseUrl": "http://10.142.149.25:61000/",
+          "logEntries": [],
+          "credentials": {
+            "username": "cgisteam",
+            "password": ""
+          },
+          "settings": {
+            "maxConcurrentServers": 3,
+            "defaultBatchSize": 500,
+            "defaultLevel": "ALL",
+            "downloadPath": ""
+          }
+        }"#;
+
+        let config: super::AppConfig = serde_json::from_str(text).unwrap();
+
+        assert!(config.servers.is_empty());
+    }
+
+    #[test]
+    fn saved_config_keeps_empty_legacy_servers_field() {
+        let text = serde_json::to_string(&super::AppConfig::default()).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+        assert!(value.get("servers").is_some());
+        assert_eq!(value["servers"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn loads_config_with_utf8_bom() {
+        let text = "\u{feff}{\"settings\":{\"maxConcurrentServers\":3,\"defaultBatchSize\":500,\"defaultLevel\":\"ALL\",\"downloadPath\":\"\"}}";
+
+        let config = super::parse_config_text(text).unwrap();
+
+        assert_eq!(config.settings.max_concurrent_servers, 3);
     }
 }

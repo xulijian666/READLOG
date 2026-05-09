@@ -6,4 +6,5 @@ pub mod error;
 pub mod filter;
 pub mod parser;
 pub mod query;
+pub mod search;
 pub mod stream_reader;

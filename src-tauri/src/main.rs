@@ -3,6 +3,7 @@ use read_log::{
     directory::{test_log_entry_connection, ConnectionCheckResult},
     download::{download_realtime_logs as do_download_realtime_logs, download_archive_logs as do_download_archive_logs, download_tail_logs as do_download_tail_logs, DownloadSummary},
     error::AppError,
+    search::SearchRegistry,
 };
 use rust_xlsxwriter::{Workbook, Format};
 use serde::{Deserialize, Serialize};
@@ -287,6 +288,7 @@ if ($dialog.ShowDialog() -eq 'OK') { $dialog.SelectedPath }
 
 fn main() {
     tauri::Builder::default()
+        .manage(SearchRegistry::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
@@ -301,7 +303,9 @@ fn main() {
             open_file,
             open_folder,
             export_xlsx,
-            pick_directory
+            pick_directory,
+            read_log::search::search_log_files,
+            read_log::search::cancel_log_search
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

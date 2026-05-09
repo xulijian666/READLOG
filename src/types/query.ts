@@ -84,3 +84,44 @@ export interface DownloadSummary {
   bytesWritten: number;
   outputPath: string;
 }
+
+export interface LogSearchRequest {
+  queryId: string;
+  logEntryIds: string[];
+  keyword: string;
+  caseSensitive: boolean;
+  beforeLines: number;
+  afterLines: number;
+  detailContextLines: number;
+  maxResults: number;
+  batchSize: number;
+}
+
+export interface LogSearchHit {
+  id: string;
+  logEntryId: string;
+  serverName: string;
+  fileName: string;
+  lineNumber: number;
+  matchedLine: string;
+  previewBeforeLines: string[];
+  previewAfterLines: string[];
+  detailBeforeLines: string[];
+  detailAfterLines: string[];
+}
+
+export interface LogSearchProgressEvent {
+  queryId: string;
+  status: string;
+  scannedBytes: number;
+  scannedLines: number;
+  matchedCount: number;
+  currentServer: string;
+}
+
+export interface LogSearchResultEvent {
+  queryId: string;
+  batchIndex: number;
+  results: LogSearchHit[];
+  isLastBatch: boolean;
+}
