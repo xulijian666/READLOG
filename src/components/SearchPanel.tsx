@@ -1,8 +1,8 @@
-import { ChevronDown, ChevronRight, Search, XCircle } from "lucide-react";
+import { Archive, ChevronDown, ChevronRight, RefreshCw, Search, X, XCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { invoke, listen } from "../lib/runtime";
 import { useServerStore } from "../store/serverStore";
-import type { LogSearchHit, LogSearchProgressEvent, LogSearchRequest, LogSearchResultEvent } from "../types/query";
+import type { DirEntry, LogSearchHit, LogSearchProgressEvent, LogSearchRequest, LogSearchResultEvent } from "../types/query";
 
 type MatchMode = LogSearchRequest["matchMode"];
 
@@ -66,6 +66,23 @@ function getMatchModeHint(mode: MatchMode) {
   return "包含任一：按空格拆词，同一行包含任意一个即可。";
 }
 
+function CustomCheckbox({ checked, onChange }: { checked: boolean; onChange: () => void }) {
+  return (
+    <span
+      className={`flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded border ${
+        checked ? "border-[#2563eb] bg-[#2563eb]" : "border-[#cfd8e6] bg-white"
+      }`}
+      onClick={onChange}
+    >
+      {checked && (
+        <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+          <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
+    </span>
+  );
+}
+
 export function SearchPanel() {
   const config = useServerStore((state) => state.config);
   const [keyword, setKeyword] = useState("");
@@ -79,6 +96,14 @@ export function SearchPanel() {
   const [progress, setProgress] = useState<LogSearchProgressEvent | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const queryIdRef = useRef<string | null>(null);
+
+  // Archive search state
+  const [archiveMode, setArchiveMode] = useState(false);
+  const [archiveEntryId, setArchiveEntryId] = useState("");
+  const [archiveFiles, setArchiveFiles] = useState<DirEntry[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [loadingFiles, setLoadingFiles] = useState(false);
+  const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -114,6 +139,50 @@ export function SearchPanel() {
 
   const enabledEntries = config.logEntries.filter((entry) => entry.enabled && entry.visible);
 
+  const openArchiveModal = async () => {
+    setError("");
+    if (!archiveEntryId) {
+      setError("请先选择一个日志路径");
+      return;
+    }
+    setLoadingFiles(true);
+    setArchiveFiles([]);
+    setSelectedFiles(new Set());
+    try {
+      const files = await invoke<DirEntry[]>("list_archive_files", {
+        logEntryId: archiveEntryId,
+      });
+      if (files.length === 0) {
+        setError("该目录下没有找到归档日志文件");
+      } else {
+        setArchiveFiles(files);
+        setSelectedFiles(new Set(files.map((f) => f.url)));
+        setShowModal(true);
+      }
+    } catch (caught) {
+      setError(String(caught));
+    } finally {
+      setLoadingFiles(false);
+    }
+  };
+
+  const toggleFile = (url: string) => {
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  };
+
+  const toggleAllFiles = () => {
+    if (selectedFiles.size === archiveFiles.length) {
+      setSelectedFiles(new Set());
+    } else {
+      setSelectedFiles(new Set(archiveFiles.map((f) => f.url)));
+    }
+  };
+
   const startSearch = async () => {
     setError("");
     const trimmed = keyword.trim();
@@ -121,10 +190,19 @@ export function SearchPanel() {
       setError("请输入关键词");
       return;
     }
-    if (!enabledEntries.length) {
-      setError("请先勾选至少一个日志 URL");
-      return;
+
+    if (archiveMode) {
+      if (selectedFiles.size === 0) {
+        setError("请先加载并选择归档文件");
+        return;
+      }
+    } else {
+      if (!enabledEntries.length) {
+        setError("请先勾选至少一个日志 URL");
+        return;
+      }
     }
+
     const contextCount = Math.max(0, Number.parseInt(beforeLines, 10) || 5);
     const max = Math.max(1, Number.parseInt(maxResults, 10) || 500);
     const queryId = crypto.randomUUID();
@@ -134,21 +212,37 @@ export function SearchPanel() {
     setExpandedIds(new Set());
     setRunning(true);
 
-    const request: LogSearchRequest = {
-      queryId,
-      logEntryIds: enabledEntries.map((entry) => entry.id),
-      keyword: trimmed,
-      matchMode,
-      caseSensitive,
-      beforeLines: contextCount,
-      afterLines: contextCount,
-      detailContextLines: 200,
-      maxResults: max,
-      batchSize: 50,
-    };
-
     try {
-      await invoke("search_log_files", { request });
+      if (archiveMode) {
+        await invoke("search_archive_files", {
+          request: {
+            queryId,
+            fileUrls: Array.from(selectedFiles),
+            keyword: trimmed,
+            matchMode,
+            caseSensitive,
+            beforeLines: contextCount,
+            afterLines: contextCount,
+            detailContextLines: 200,
+            maxResults: max,
+            batchSize: 50,
+          },
+        });
+      } else {
+        const request: LogSearchRequest = {
+          queryId,
+          logEntryIds: enabledEntries.map((entry) => entry.id),
+          keyword: trimmed,
+          matchMode,
+          caseSensitive,
+          beforeLines: contextCount,
+          afterLines: contextCount,
+          detailContextLines: 200,
+          maxResults: max,
+          batchSize: 50,
+        };
+        await invoke("search_log_files", { request });
+      }
     } catch (caught) {
       setError(String(caught));
       setRunning(false);
@@ -170,10 +264,66 @@ export function SearchPanel() {
     });
   };
 
+  const scopeLabel = archiveMode
+    ? `归档文件 ${selectedFiles.size} 个`
+    : `当前勾选的 ${enabledEntries.length} 个单体日志 URL`;
+
+  const allSelected = selectedFiles.size === archiveFiles.length && archiveFiles.length > 0;
+  const someSelected = selectedFiles.size > 0 && selectedFiles.size < archiveFiles.length;
+
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-[#f5f7fb] px-5 py-5">
       <div className="rounded-lg border border-[#d9e1ec] bg-white p-5">
-        <div className="grid items-end gap-4" style={{ gridTemplateColumns: "minmax(300px, 1fr) 140px 130px 130px auto auto" }}>
+        {/* Archive mode toggle row */}
+        <div className="mb-3 flex items-center gap-4">
+          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-[#243145]">
+            <input
+              type="checkbox"
+              className="accent-[#2563eb]"
+              checked={archiveMode}
+              onChange={(e) => {
+                setArchiveMode(e.target.checked);
+                setError("");
+                setResults([]);
+                setProgress(null);
+              }}
+            />
+            <Archive size={15} /> 归档查询
+          </label>
+          {archiveMode && (
+            <>
+              <select
+                className="min-w-[180px] rounded-md border border-[#cfd8e6] bg-white px-3 py-1.5 text-sm outline-none focus:border-[#2563eb]"
+                value={archiveEntryId}
+                onChange={(e) => {
+                  setArchiveEntryId(e.target.value);
+                  setSelectedFiles(new Set());
+                  setArchiveFiles([]);
+                  setError("");
+                }}
+              >
+                <option value="">-- 选择日志路径 --</option>
+                {enabledEntries.map((e) => (
+                  <option key={e.id} value={e.id}>{e.name}</option>
+                ))}
+              </select>
+              <button
+                className="inline-flex items-center gap-1.5 rounded-md border border-[#cfd8e6] bg-white px-3 py-1.5 text-sm text-[#69778c] hover:bg-[#eef3f8] disabled:opacity-50"
+                type="button"
+                onClick={() => void openArchiveModal()}
+                disabled={loadingFiles || !archiveEntryId}
+              >
+                <RefreshCw size={14} className={loadingFiles ? "animate-spin" : ""} /> {loadingFiles ? "加载中..." : "加载文件"}
+              </button>
+              {selectedFiles.size > 0 && (
+                <span className="text-xs text-[#69778c]">已选 {selectedFiles.size} 个文件</span>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Search controls row */}
+        <div className="grid items-end gap-4" style={{ gridTemplateColumns: archiveMode ? "minmax(260px, 1fr) 130px 120px 120px auto auto" : "minmax(300px, 1fr) 140px 130px 130px auto auto" }}>
           <label className="block text-sm font-medium text-[#243145]">
             关键词
             <input
@@ -243,7 +393,7 @@ export function SearchPanel() {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-[#69778c]">
-          <span>查询范围：当前勾选的 {enabledEntries.length} 个单体日志 URL</span>
+          <span>查询范围：{scopeLabel}</span>
           <span>{getMatchModeHint(matchMode)}</span>
           {progress && (
             <>
@@ -299,6 +449,71 @@ export function SearchPanel() {
           </div>
         )}
       </div>
+
+      {/* Archive file picker modal */}
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowModal(false)}>
+          <div className="flex w-[560px] max-h-[80vh] flex-col rounded-lg bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-[#e3e8f0] px-5 py-3">
+              <h3 className="text-sm font-semibold text-[#243145]">
+                选择归档文件 — {enabledEntries.find((e) => e.id === archiveEntryId)?.name}
+              </h3>
+              <button className="rounded p-1 text-[#9ca3af] hover:bg-[#f3f4f6] hover:text-[#243145]" onClick={() => setShowModal(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between border-b border-[#e8ecf2] px-5 py-2">
+              <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-[#243145]">
+                <input className="sr-only" type="checkbox" checked={allSelected} onChange={toggleAllFiles} />
+                <span
+                  className={`flex h-4 w-4 items-center justify-center rounded border ${
+                    allSelected ? "border-[#2563eb] bg-[#2563eb]" : someSelected ? "border-[#2563eb] bg-[#2563eb]" : "border-[#cfd8e6] bg-white"
+                  }`}
+                  onClick={toggleAllFiles}
+                >
+                  {allSelected ? (
+                    <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  ) : someSelected ? (
+                    <svg width="10" height="2" viewBox="0 0 10 2" fill="none"><path d="M1 1H9" stroke="white" strokeWidth="1.5" strokeLinecap="round" /></svg>
+                  ) : null}
+                </span>
+                全选
+              </label>
+              <span className="text-xs text-[#69778c]">已选 {selectedFiles.size} / {archiveFiles.length}</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-1">
+              {archiveFiles.map((file) => (
+                <label key={file.url} className="flex cursor-pointer items-center gap-2.5 rounded px-4 py-2 text-sm hover:bg-[#f0f4ff]">
+                  <input className="sr-only" type="checkbox" checked={selectedFiles.has(file.url)} onChange={() => toggleFile(file.url)} />
+                  <CustomCheckbox checked={selectedFiles.has(file.url)} onChange={() => toggleFile(file.url)} />
+                  <span className="flex-1 truncate text-[#243145]">{file.name}</span>
+                  {file.name.endsWith(".gz") && (
+                    <span className="shrink-0 rounded bg-[#dbeafe] px-1.5 py-0.5 text-[10px] font-medium text-[#2563eb]">gz</span>
+                  )}
+                </label>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-[#e3e8f0] px-5 py-3">
+              <button
+                className="rounded-md border border-[#cfd8e6] bg-white px-4 py-2 text-sm text-[#69778c] hover:bg-[#f3f4f6]"
+                onClick={() => setShowModal(false)}
+              >
+                取消
+              </button>
+              <button
+                className="inline-flex items-center gap-2 rounded-md bg-[#2563eb] px-5 py-2 text-sm font-medium text-white hover:bg-[#1d4ed8] disabled:opacity-50"
+                onClick={() => setShowModal(false)}
+                disabled={selectedFiles.size === 0}
+              >
+                确定 ({selectedFiles.size})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

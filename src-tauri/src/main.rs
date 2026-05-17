@@ -1,7 +1,7 @@
 use read_log::{
     config::{load_config, save_config, AppConfig},
-    directory::{test_log_entry_connection, ConnectionCheckResult},
-    download::{download_realtime_logs as do_download_realtime_logs, download_archive_logs as do_download_archive_logs, download_tail_logs as do_download_tail_logs, DownloadSummary},
+    directory::{test_log_entry_connection, ConnectionCheckResult, DirEntry},
+    download::{download_realtime_logs as do_download_realtime_logs, download_archive_logs as do_download_archive_logs, download_tail_logs as do_download_tail_logs, download_selected_archive_files as do_download_selected_archive_files, list_archive_files as do_list_archive_files, DownloadSummary},
     error::AppError,
     search::SearchRegistry,
 };
@@ -286,6 +286,36 @@ if ($dialog.ShowDialog() -eq 'OK') { $dialog.SelectedPath }
     }
 }
 
+#[tauri::command]
+async fn list_archive_files(log_entry_id: String) -> Result<Vec<DirEntry>, AppError> {
+    let config = load_config().await?;
+    if config.credentials.username.trim().is_empty() {
+        return Err(AppError::Message("请先填写统一用户名".to_string()));
+    }
+    let entry = config
+        .log_entries
+        .iter()
+        .find(|e| e.id == log_entry_id)
+        .ok_or_else(|| AppError::Message("未找到指定的日志路径".to_string()))?;
+    do_list_archive_files(&config.base_url, entry, &config.credentials).await
+}
+
+#[tauri::command]
+async fn download_selected_archive_files(
+    file_urls: Vec<String>,
+    output_path: String,
+) -> Result<DownloadSummary, AppError> {
+    let config = load_config().await?;
+    if config.credentials.username.trim().is_empty() {
+        return Err(AppError::Message("请先填写统一用户名".to_string()));
+    }
+    if file_urls.is_empty() {
+        return Err(AppError::Message("请至少选择一个文件".to_string()));
+    }
+    let effective_path = if output_path.is_empty() { &config.settings.download_path } else { &output_path };
+    do_download_selected_archive_files(&config.credentials, file_urls, effective_path).await
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(SearchRegistry::default())
@@ -298,6 +328,8 @@ fn main() {
             download_realtime_logs,
             download_archive_logs,
             download_tail_logs,
+            list_archive_files,
+            download_selected_archive_files,
             check_agent_status,
             copy_agent_prompt,
             open_file,
@@ -305,6 +337,7 @@ fn main() {
             export_xlsx,
             pick_directory,
             read_log::search::search_log_files,
+            read_log::search::search_archive_files,
             read_log::search::cancel_log_search
         ])
         .run(tauri::generate_context!())

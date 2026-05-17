@@ -7,6 +7,7 @@ use tokio::io::AsyncWriteExt;
 use url::Url;
 
 use crate::config::{build_full_url, extract_log_type, AuthConfig, LogEntry};
+use crate::directory::{self, DirEntry};
 use crate::error::{AppError, AppResult};
 
 const PAGE_SIZE_BYTES: u64 = 15 * 1024 * 1024; // 15MB
@@ -337,4 +338,119 @@ pub async fn export_filtered_results(events: Vec<crate::parser::LogEvent>, outpu
     }
     tokio::fs::write(output_path, text).await?;
     Ok(())
+}
+
+pub async fn list_archive_files(
+    base_url: &str,
+    entry: &LogEntry,
+    credentials: &AuthConfig,
+) -> AppResult<Vec<DirEntry>> {
+    let full_path = format!("{}{}", entry.path.trim_end_matches('/'), "/");
+    let dir_url = build_full_url(base_url, &full_path, "")?;
+    let all_entries = directory::fetch_directory_entries(&dir_url, credentials).await?;
+    let files: Vec<DirEntry> = all_entries
+        .into_iter()
+        .filter(|e| {
+            !e.is_dir && (e.name.ends_with(".log.gz") || e.name.ends_with(".log"))
+        })
+        .collect();
+    Ok(files)
+}
+
+pub async fn download_selected_archive_files(
+    credentials: &AuthConfig,
+    file_urls: Vec<String>,
+    output_path: &str,
+) -> AppResult<DownloadSummary> {
+    let password = crate::crypto::reveal_password(&credentials.password)?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()?;
+
+    let base_output_path = if output_path.trim().is_empty() {
+        let mut path = dirs::download_dir()
+            .or_else(dirs::home_dir)
+            .ok_or_else(|| AppError::NotFound("Downloads directory".to_string()))?;
+        let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        path.push(format!("archive_selected_{stamp}.log"));
+        path
+    } else {
+        PathBuf::from(output_path)
+    };
+    if let Some(parent) = base_output_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let mut all_content = Vec::new();
+    let mut total_bytes = 0_u64;
+    let mut server_count = 0_usize;
+
+    for file_url in &file_urls {
+        let response = match client
+            .get(file_url.as_str())
+            .basic_auth(&credentials.username, Some(&password))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if !response.status().is_success() {
+            continue;
+        }
+
+        let content = if file_url.ends_with(".gz") {
+            let gz_bytes = response.bytes().await?;
+            let mut decoder = GzDecoder::new(&gz_bytes[..]);
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed)?;
+            decompressed
+        } else {
+            response.bytes().await?.to_vec()
+        };
+
+        if content.is_empty() {
+            continue;
+        }
+        server_count += 1;
+        let header = format!("\n===== {} =====\n", file_url);
+        all_content.extend_from_slice(header.as_bytes());
+        total_bytes += header.len() as u64;
+        all_content.extend_from_slice(&content);
+        total_bytes += content.len() as u64;
+    }
+
+    if all_content.is_empty() {
+        return Ok(DownloadSummary {
+            server_count: 0,
+            bytes_written: 0,
+            output_path: String::new(),
+        });
+    }
+
+    // 分页写入
+    let page_count = (total_bytes / PAGE_SIZE_BYTES + 1) as usize;
+    let output_paths = if page_count == 1 {
+        tokio::fs::write(&base_output_path, &all_content).await?;
+        vec![base_output_path.to_string_lossy().to_string()]
+    } else {
+        let mut paths = Vec::new();
+        for page in 0..page_count {
+            let start = (page as u64 * PAGE_SIZE_BYTES) as usize;
+            let end = std::cmp::min(start + PAGE_SIZE_BYTES as usize, all_content.len());
+            if start >= all_content.len() {
+                break;
+            }
+            let page_path = base_output_path.with_extension(format!("part{}.log", page + 1));
+            tokio::fs::write(&page_path, &all_content[start..end]).await?;
+            paths.push(page_path.to_string_lossy().to_string());
+        }
+        paths
+    };
+
+    Ok(DownloadSummary {
+        server_count,
+        bytes_written: total_bytes,
+        output_path: output_paths.join(", "),
+    })
 }

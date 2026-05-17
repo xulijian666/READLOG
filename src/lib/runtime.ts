@@ -102,11 +102,20 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
     case "download_realtime_logs":
     case "download_archive_logs":
     case "download_tail_logs":
+    case "download_selected_archive_files":
       return {
-        serverCount: (args?.logEntryIds as string[] | undefined)?.length ?? 0,
+        serverCount: (args?.logEntryIds as string[] | undefined)?.length ?? (args?.fileUrls as string[] | undefined)?.length ?? 0,
         bytesWritten: 0,
         outputPath: String(args?.outputPath ?? ""),
       } satisfies DownloadSummary as T;
+    case "list_archive_files":
+      return [
+        { name: "app-2026-05-16_00.log.gz", url: "browser-preview://app-2026-05-16_00.log.gz", isDir: false },
+        { name: "app-2026-05-16_01.log.gz", url: "browser-preview://app-2026-05-16_01.log.gz", isDir: false },
+        { name: "app-2026-05-16_02.log", url: "browser-preview://app-2026-05-16_02.log", isDir: false },
+      ] satisfies DirEntry[] as T;
+    case "search_archive_files":
+      return String(args?.request ? (args.request as Record<string, unknown>).queryId : "mock") as T;
     default:
       return undefined as T;
   }

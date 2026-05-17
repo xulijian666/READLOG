@@ -315,6 +315,268 @@ pub async fn cancel_log_search(query_id: String, registry: State<'_, SearchRegis
     Ok(())
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveSearchRequest {
+    pub query_id: String,
+    pub file_urls: Vec<String>,
+    pub keyword: String,
+    #[serde(default = "default_match_mode")]
+    pub match_mode: SearchMatchMode,
+    pub case_sensitive: bool,
+    pub before_lines: usize,
+    pub after_lines: usize,
+    pub detail_context_lines: usize,
+    pub max_results: usize,
+    pub batch_size: usize,
+}
+
+#[tauri::command]
+pub async fn search_archive_files(
+    app: AppHandle,
+    request: ArchiveSearchRequest,
+    registry: State<'_, SearchRegistry>,
+) -> Result<String, AppError> {
+    if request.keyword.trim().is_empty() {
+        return Err(AppError::Message("请输入关键词".to_string()));
+    }
+    if request.file_urls.is_empty() {
+        return Err(AppError::Message("请至少选择一个归档文件".to_string()));
+    }
+
+    let token = CancellationToken::new();
+    registry
+        .tokens
+        .lock()
+        .await
+        .insert(request.query_id.clone(), token.clone());
+
+    let query_id = request.query_id.clone();
+    let spawned_query_id = query_id.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = run_archive_search(app.clone(), request, token).await {
+            let _ = app.emit(
+                "search-progress",
+                LogSearchProgressEvent {
+                    query_id: spawned_query_id,
+                    status: format!("error: {error}"),
+                    scanned_bytes: 0,
+                    scanned_lines: 0,
+                    matched_count: 0,
+                    current_server: String::new(),
+                },
+            );
+        }
+    });
+
+    Ok(query_id)
+}
+
+async fn run_archive_search(app: AppHandle, request: ArchiveSearchRequest, token: CancellationToken) -> AppResult<()> {
+    let config = load_config().await?;
+    let password = crate::crypto::reveal_password(&config.credentials.password)?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+
+    let options = SearchOptions {
+        keyword: request.keyword.clone(),
+        match_mode: request.match_mode,
+        case_sensitive: request.case_sensitive,
+        before_lines: request.before_lines.min(50),
+        after_lines: request.after_lines.min(50),
+        detail_context_lines: request.detail_context_lines.min(500),
+        max_results: request.max_results.clamp(1, 5000),
+    };
+    let batch_size = request.batch_size.clamp(1, 200);
+
+    let mut batch_index = 0usize;
+    let mut emitted_count = 0usize;
+    let mut total_scanned_bytes = 0usize;
+    let mut total_scanned_lines = 0usize;
+
+    for file_url in &request.file_urls {
+        if token.is_cancelled() {
+            break;
+        }
+
+        let file_name = file_url.rsplit('/').next().unwrap_or(file_url).to_string();
+
+        let _ = app.emit(
+            "search-progress",
+            LogSearchProgressEvent {
+                query_id: request.query_id.clone(),
+                status: "running".to_string(),
+                scanned_bytes: total_scanned_bytes,
+                scanned_lines: total_scanned_lines,
+                matched_count: emitted_count,
+                current_server: file_name.clone(),
+            },
+        );
+
+        let response = match client
+            .get(file_url.as_str())
+            .basic_auth(&config.credentials.username, Some(&password))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if !response.status().is_success() {
+            continue;
+        }
+
+        let content = if file_url.ends_with(".gz") {
+            let gz_bytes = match response.bytes().await {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            total_scanned_bytes += gz_bytes.len();
+            let mut decoder = GzDecoder::new(&gz_bytes[..]);
+            let mut decompressed = String::new();
+            if decoder.read_to_string(&mut decompressed).is_err() {
+                continue;
+            }
+            decompressed
+        } else {
+            match response.text().await {
+                Ok(t) => {
+                    total_scanned_bytes += t.len();
+                    t
+                }
+                Err(_) => continue,
+            }
+        };
+
+        let mut searcher = LineSearcher::new(options.clone());
+        let mut file_batch = Vec::new();
+
+        for line in content.lines() {
+            if token.is_cancelled() {
+                break;
+            }
+            total_scanned_lines += 1;
+
+            for hit in searcher.process_line(line) {
+                file_batch.push(LogSearchHit {
+                    id: format!("{}:{}", file_name, hit.line_number),
+                    log_entry_id: file_name.clone(),
+                    server_name: file_name.clone(),
+                    file_name: file_name.clone(),
+                    line_number: hit.line_number,
+                    matched_line: hit.matched_line,
+                    preview_before_lines: hit.preview_before_lines,
+                    preview_after_lines: hit.preview_after_lines,
+                    detail_before_lines: hit.detail_before_lines,
+                    detail_after_lines: hit.detail_after_lines,
+                });
+            }
+
+            if file_batch.len() >= batch_size {
+                let remaining = options.max_results.saturating_sub(emitted_count);
+                if remaining == 0 {
+                    token.cancel();
+                    break;
+                }
+                let results = if file_batch.len() > remaining {
+                    file_batch.truncate(remaining);
+                    token.cancel();
+                    std::mem::take(&mut file_batch)
+                } else {
+                    std::mem::take(&mut file_batch)
+                };
+                emitted_count += results.len();
+                let _ = app.emit(
+                    "search-result",
+                    LogSearchResultEvent {
+                        query_id: request.query_id.clone(),
+                        batch_index,
+                        results,
+                        is_last_batch: false,
+                    },
+                );
+                batch_index += 1;
+            }
+
+            if emitted_count >= options.max_results {
+                break;
+            }
+        }
+
+        // Flush remaining hits from this file
+        for hit in searcher.finish() {
+            file_batch.push(LogSearchHit {
+                id: format!("{}:{}", file_name, hit.line_number),
+                log_entry_id: file_name.clone(),
+                server_name: file_name.clone(),
+                file_name: file_name.clone(),
+                line_number: hit.line_number,
+                matched_line: hit.matched_line,
+                preview_before_lines: hit.preview_before_lines,
+                preview_after_lines: hit.preview_after_lines,
+                detail_before_lines: hit.detail_before_lines,
+                detail_after_lines: hit.detail_after_lines,
+            });
+        }
+        if !file_batch.is_empty() {
+            let remaining = options.max_results.saturating_sub(emitted_count);
+            if remaining > 0 {
+                if file_batch.len() > remaining {
+                    file_batch.truncate(remaining);
+                    token.cancel();
+                }
+                emitted_count += file_batch.len();
+                let _ = app.emit(
+                    "search-result",
+                    LogSearchResultEvent {
+                        query_id: request.query_id.clone(),
+                        batch_index,
+                        results: std::mem::take(&mut file_batch),
+                        is_last_batch: false,
+                    },
+                );
+                batch_index += 1;
+            }
+        }
+
+        let _ = app.emit(
+            "search-progress",
+            LogSearchProgressEvent {
+                query_id: request.query_id.clone(),
+                status: "running".to_string(),
+                scanned_bytes: total_scanned_bytes,
+                scanned_lines: total_scanned_lines,
+                matched_count: emitted_count,
+                current_server: file_name,
+            },
+        );
+    }
+
+    let _ = app.emit(
+        "search-result",
+        LogSearchResultEvent {
+            query_id: request.query_id.clone(),
+            batch_index,
+            results: Vec::new(),
+            is_last_batch: true,
+        },
+    );
+
+    let _ = app.emit(
+        "search-progress",
+        LogSearchProgressEvent {
+            query_id: request.query_id,
+            status: if token.is_cancelled() { "cancelled" } else { "completed" }.to_string(),
+            scanned_bytes: total_scanned_bytes,
+            scanned_lines: total_scanned_lines,
+            matched_count: emitted_count,
+            current_server: String::new(),
+        },
+    );
+    Ok(())
+}
+
 async fn run_log_search(app: AppHandle, request: LogSearchRequest, token: CancellationToken) -> AppResult<()> {
     let config = load_config().await?;
     if config.credentials.username.trim().is_empty() {
