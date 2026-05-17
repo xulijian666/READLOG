@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use read_log::{
     config::{load_config, save_config, AppConfig},
     directory::{test_log_entry_connection, ConnectionCheckResult, DirEntry},
