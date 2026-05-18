@@ -110,9 +110,15 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
       } satisfies DownloadSummary as T;
     case "list_archive_files":
       return [
+        { name: "archive", url: "browser-preview://archive/", isDir: true },
         { name: "app-2026-05-16_00.log.gz", url: "browser-preview://app-2026-05-16_00.log.gz", isDir: false },
         { name: "app-2026-05-16_01.log.gz", url: "browser-preview://app-2026-05-16_01.log.gz", isDir: false },
         { name: "app-2026-05-16_02.log", url: "browser-preview://app-2026-05-16_02.log", isDir: false },
+      ] satisfies DirEntry[] as T;
+    case "list_archive_subdir":
+      return [
+        { name: "app-2026-05-15_00.log.gz", url: "browser-preview://archive/app-2026-05-15_00.log.gz", isDir: false },
+        { name: "app-2026-05-15_01.log.gz", url: "browser-preview://archive/app-2026-05-15_01.log.gz", isDir: false },
       ] satisfies DirEntry[] as T;
     case "search_archive_files":
       return String(args?.request ? (args.request as Record<string, unknown>).queryId : "mock") as T;

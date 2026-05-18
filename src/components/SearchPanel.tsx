@@ -1,4 +1,4 @@
-import { Archive, ChevronDown, ChevronRight, RefreshCw, Search, X, XCircle } from "lucide-react";
+import { Archive, ChevronDown, ChevronRight, FolderOpen, RefreshCw, Search, X, XCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { invoke, listen } from "../lib/runtime";
 import { useServerStore } from "../store/serverStore";
@@ -104,6 +104,7 @@ export function SearchPanel() {
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [breadcrumbs, setBreadcrumbs] = useState<Array<{ name: string; url: string }>>([]);
 
   useEffect(() => {
     let disposed = false;
@@ -148,6 +149,7 @@ export function SearchPanel() {
     setLoadingFiles(true);
     setArchiveFiles([]);
     setSelectedFiles(new Set());
+    setBreadcrumbs([]);
     try {
       const files = await invoke<DirEntry[]>("list_archive_files", {
         logEntryId: archiveEntryId,
@@ -156,9 +158,41 @@ export function SearchPanel() {
         setError("该目录下没有找到归档日志文件");
       } else {
         setArchiveFiles(files);
-        setSelectedFiles(new Set(files.map((f) => f.url)));
+        setSelectedFiles(new Set(files.filter((f) => !f.isDir).map((f) => f.url)));
         setShowModal(true);
       }
+    } catch (caught) {
+      setError(String(caught));
+    } finally {
+      setLoadingFiles(false);
+    }
+  };
+
+  const navigateToFolder = async (folder: DirEntry) => {
+    setLoadingFiles(true);
+    try {
+      const files = await invoke<DirEntry[]>("list_archive_subdir", {
+        dirUrl: folder.url,
+      });
+      setBreadcrumbs((prev) => [...prev, { name: folder.name, url: folder.url }]);
+      setArchiveFiles(files);
+      setSelectedFiles(new Set(files.filter((f) => !f.isDir).map((f) => f.url)));
+    } catch (caught) {
+      setError(String(caught));
+    } finally {
+      setLoadingFiles(false);
+    }
+  };
+
+  const navigateToBreadcrumb = async (index: number) => {
+    setLoadingFiles(true);
+    try {
+      const target = index < 0
+        ? await invoke<DirEntry[]>("list_archive_files", { logEntryId: archiveEntryId })
+        : await invoke<DirEntry[]>("list_archive_subdir", { dirUrl: breadcrumbs[index].url });
+      setBreadcrumbs((prev) => prev.slice(0, index + 1));
+      setArchiveFiles(target);
+      setSelectedFiles(new Set(target.filter((f) => !f.isDir).map((f) => f.url)));
     } catch (caught) {
       setError(String(caught));
     } finally {
@@ -176,10 +210,11 @@ export function SearchPanel() {
   };
 
   const toggleAllFiles = () => {
-    if (selectedFiles.size === archiveFiles.length) {
+    const fileEntries = archiveFiles.filter((f) => !f.isDir);
+    if (selectedFiles.size === fileEntries.length) {
       setSelectedFiles(new Set());
     } else {
-      setSelectedFiles(new Set(archiveFiles.map((f) => f.url)));
+      setSelectedFiles(new Set(fileEntries.map((f) => f.url)));
     }
   };
 
@@ -268,8 +303,9 @@ export function SearchPanel() {
     ? `归档文件 ${selectedFiles.size} 个`
     : `当前勾选的 ${enabledEntries.length} 个单体日志 URL`;
 
-  const allSelected = selectedFiles.size === archiveFiles.length && archiveFiles.length > 0;
-  const someSelected = selectedFiles.size > 0 && selectedFiles.size < archiveFiles.length;
+  const fileCount = archiveFiles.filter((f) => !f.isDir).length;
+  const allSelected = selectedFiles.size === fileCount && fileCount > 0;
+  const someSelected = selectedFiles.size > 0 && selectedFiles.size < fileCount;
 
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-[#f5f7fb] px-5 py-5">
@@ -463,6 +499,27 @@ export function SearchPanel() {
               </button>
             </div>
 
+            {/* Breadcrumbs */}
+            <div className="flex items-center gap-1 border-b border-[#e8ecf2] px-5 py-2 text-xs text-[#69778c]">
+              <button
+                className="rounded px-1 py-0.5 text-[#2563eb] hover:bg-[#eef3f8]"
+                onClick={() => void navigateToBreadcrumb(-1)}
+              >
+                根目录
+              </button>
+              {breadcrumbs.map((crumb, i) => (
+                <span key={crumb.url} className="flex items-center gap-1">
+                  <ChevronRight size={12} />
+                  <button
+                    className="rounded px-1 py-0.5 text-[#2563eb] hover:bg-[#eef3f8]"
+                    onClick={() => void navigateToBreadcrumb(i)}
+                  >
+                    {crumb.name}
+                  </button>
+                </span>
+              ))}
+            </div>
+
             <div className="flex items-center justify-between border-b border-[#e8ecf2] px-5 py-2">
               <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-[#243145]">
                 <input className="sr-only" type="checkbox" checked={allSelected} onChange={toggleAllFiles} />
@@ -480,20 +537,39 @@ export function SearchPanel() {
                 </span>
                 全选
               </label>
-              <span className="text-xs text-[#69778c]">已选 {selectedFiles.size} / {archiveFiles.length}</span>
+              <span className="text-xs text-[#69778c]">已选 {selectedFiles.size} / {fileCount}</span>
             </div>
 
             <div className="flex-1 overflow-y-auto px-1">
-              {archiveFiles.map((file) => (
-                <label key={file.url} className="flex cursor-pointer items-center gap-2.5 rounded px-4 py-2 text-sm hover:bg-[#f0f4ff]">
-                  <input className="sr-only" type="checkbox" checked={selectedFiles.has(file.url)} onChange={() => toggleFile(file.url)} />
-                  <CustomCheckbox checked={selectedFiles.has(file.url)} onChange={() => toggleFile(file.url)} />
-                  <span className="flex-1 truncate text-[#243145]">{file.name}</span>
-                  {file.name.endsWith(".gz") && (
-                    <span className="shrink-0 rounded bg-[#dbeafe] px-1.5 py-0.5 text-[10px] font-medium text-[#2563eb]">gz</span>
-                  )}
-                </label>
-              ))}
+              {loadingFiles ? (
+                <div className="flex items-center justify-center py-8 text-sm text-[#69778c]">加载中...</div>
+              ) : archiveFiles.length === 0 ? (
+                <div className="flex items-center justify-center py-8 text-sm text-[#69778c]">该目录为空</div>
+              ) : (
+                archiveFiles.map((file) =>
+                  file.isDir ? (
+                    <button
+                      key={file.url}
+                      type="button"
+                      className="flex w-full cursor-pointer items-center gap-2.5 rounded px-4 py-2 text-sm hover:bg-[#f0f4ff]"
+                      onClick={() => void navigateToFolder(file)}
+                    >
+                      <FolderOpen size={16} className="shrink-0 text-[#f59e0b]" />
+                      <span className="flex-1 truncate text-left text-[#243145]">{file.name}</span>
+                      <ChevronRight size={14} className="shrink-0 text-[#9ca3af]" />
+                    </button>
+                  ) : (
+                    <label key={file.url} className="flex cursor-pointer items-center gap-2.5 rounded px-4 py-2 text-sm hover:bg-[#f0f4ff]">
+                      <input className="sr-only" type="checkbox" checked={selectedFiles.has(file.url)} onChange={() => toggleFile(file.url)} />
+                      <CustomCheckbox checked={selectedFiles.has(file.url)} onChange={() => toggleFile(file.url)} />
+                      <span className="flex-1 truncate text-[#243145]">{file.name}</span>
+                      {file.name.endsWith(".gz") && (
+                        <span className="shrink-0 rounded bg-[#dbeafe] px-1.5 py-0.5 text-[10px] font-medium text-[#2563eb]">gz</span>
+                      )}
+                    </label>
+                  )
+                )
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-3 border-t border-[#e3e8f0] px-5 py-3">

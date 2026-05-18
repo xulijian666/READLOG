@@ -3,12 +3,17 @@
 use read_log::{
     config::{load_config, save_config, AppConfig},
     directory::{test_log_entry_connection, ConnectionCheckResult, DirEntry},
-    download::{download_realtime_logs as do_download_realtime_logs, download_archive_logs as do_download_archive_logs, download_tail_logs as do_download_tail_logs, download_selected_archive_files as do_download_selected_archive_files, list_archive_files as do_list_archive_files, DownloadSummary},
+    download::{download_realtime_logs as do_download_realtime_logs, download_archive_logs as do_download_archive_logs, download_tail_logs as do_download_tail_logs, download_selected_archive_files as do_download_selected_archive_files, list_archive_files as do_list_archive_files, list_archive_subdir as do_list_archive_subdir, DownloadSummary},
     error::AppError,
     search::SearchRegistry,
 };
 use rust_xlsxwriter::{Workbook, Format};
 use serde::{Deserialize, Serialize};
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Serialize)]
 struct AgentStatus {
@@ -118,13 +123,13 @@ async fn download_tail_logs(
 
 #[tauri::command]
 fn check_agent_status() -> Result<AgentStatus, AppError> {
-    let installed = std::process::Command::new("where")
-        .arg("claude")
+    let mut cmd = std::process::Command::new("where");
+    cmd.arg("claude")
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .stderr(std::process::Stdio::null());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let installed = cmd.status().map(|s| s.success()).unwrap_or(false);
     Ok(AgentStatus { installed })
 }
 
@@ -146,6 +151,7 @@ fn copy_agent_prompt(file_path: String) -> Result<(), AppError> {
                 "-Command",
                 &format!("Set-Clipboard -Value (Get-Content -Raw -Encoding UTF8 '{}')", temp_file.display()),
             ])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()?;
     }
     #[cfg(target_os = "macos")]
@@ -176,6 +182,7 @@ fn open_file(path: String) -> Result<(), AppError> {
     {
         std::process::Command::new("cmd")
             .args(["/C", "start", "", &path])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()?;
     }
     #[cfg(target_os = "macos")]
@@ -195,6 +202,7 @@ fn open_folder(path: String) -> Result<(), AppError> {
     {
         std::process::Command::new("explorer")
             .args(["/select,", &path])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()?;
     }
     #[cfg(target_os = "macos")]
@@ -261,6 +269,7 @@ if ($dialog.ShowDialog() -eq 'OK') { $dialog.SelectedPath }
 "#;
         let output = Command::new("powershell")
             .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map_err(|e| AppError::Message(e.to_string()))?;
 
@@ -303,6 +312,12 @@ async fn list_archive_files(log_entry_id: String) -> Result<Vec<DirEntry>, AppEr
 }
 
 #[tauri::command]
+async fn list_archive_subdir(dir_url: String) -> Result<Vec<DirEntry>, AppError> {
+    let config = load_config().await?;
+    do_list_archive_subdir(&config.credentials, &dir_url).await
+}
+
+#[tauri::command]
 async fn download_selected_archive_files(
     file_urls: Vec<String>,
     output_path: String,
@@ -331,6 +346,7 @@ fn main() {
             download_archive_logs,
             download_tail_logs,
             list_archive_files,
+            list_archive_subdir,
             download_selected_archive_files,
             check_agent_status,
             copy_agent_prompt,

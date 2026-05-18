@@ -340,6 +340,13 @@ pub async fn export_filtered_results(events: Vec<crate::parser::LogEvent>, outpu
     Ok(())
 }
 
+fn filter_archive_entries(entries: Vec<DirEntry>) -> Vec<DirEntry> {
+    entries
+        .into_iter()
+        .filter(|e| e.is_dir || e.name.ends_with(".log.gz") || e.name.ends_with(".log"))
+        .collect()
+}
+
 pub async fn list_archive_files(
     base_url: &str,
     entry: &LogEntry,
@@ -348,13 +355,15 @@ pub async fn list_archive_files(
     let full_path = format!("{}{}", entry.path.trim_end_matches('/'), "/");
     let dir_url = build_full_url(base_url, &full_path, "")?;
     let all_entries = directory::fetch_directory_entries(&dir_url, credentials).await?;
-    let files: Vec<DirEntry> = all_entries
-        .into_iter()
-        .filter(|e| {
-            !e.is_dir && (e.name.ends_with(".log.gz") || e.name.ends_with(".log"))
-        })
-        .collect();
-    Ok(files)
+    Ok(filter_archive_entries(all_entries))
+}
+
+pub async fn list_archive_subdir(
+    credentials: &AuthConfig,
+    dir_url: &str,
+) -> AppResult<Vec<DirEntry>> {
+    let all_entries = directory::fetch_directory_entries(dir_url, credentials).await?;
+    Ok(filter_archive_entries(all_entries))
 }
 
 pub async fn download_selected_archive_files(
