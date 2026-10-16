@@ -12,13 +12,13 @@ function formatBytes(bytes: number) {
 
 type DownloadMode = "realtime" | "archive" | "tail";
 
-function CustomCheckbox({ checked, onChange }: { checked: boolean; onChange: () => void }) {
+function CustomCheckbox({ checked }: { checked: boolean }) {
   return (
     <span
       className={`flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded border ${
         checked ? "border-[#2563eb] bg-[#2563eb]" : "border-[#cfd8e6] bg-white"
       }`}
-      onClick={onChange}
+      aria-hidden="true"
     >
       {checked && (
         <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
@@ -422,13 +422,13 @@ export function DownloadPanel() {
 
             {/* Select all bar */}
             <div className="flex items-center justify-between border-b border-[#e8ecf2] px-5 py-2">
-              <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-[#243145]">
+              <label className="-m-2 inline-flex cursor-pointer items-center gap-2 p-2 text-sm text-[#243145]">
                 <input className="sr-only" type="checkbox" checked={allSelected} onChange={toggleAllFiles} />
                 <span
                   className={`flex h-4 w-4 items-center justify-center rounded border ${
                     allSelected ? "border-[#2563eb] bg-[#2563eb]" : someSelected ? "border-[#2563eb] bg-[#2563eb]" : "border-[#cfd8e6] bg-white"
                   }`}
-                  onClick={toggleAllFiles}
+                  aria-hidden="true"
                 >
                   {allSelected ? (
                     <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -466,7 +466,7 @@ export function DownloadPanel() {
                       className="flex cursor-pointer items-center gap-2.5 rounded px-4 py-2 text-sm hover:bg-[#f0f4ff]"
                     >
                       <input className="sr-only" type="checkbox" checked={selectedFiles.has(file.url)} onChange={() => toggleFile(file.url)} />
-                      <CustomCheckbox checked={selectedFiles.has(file.url)} onChange={() => toggleFile(file.url)} />
+                      <CustomCheckbox checked={selectedFiles.has(file.url)} />
                       <span className="flex-1 truncate text-[#243145]">{file.name}</span>
                       {file.name.endsWith(".gz") && (
                         <span className="shrink-0 rounded bg-[#dbeafe] px-1.5 py-0.5 text-[10px] font-medium text-[#2563eb]">gz</span>

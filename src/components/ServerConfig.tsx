@@ -8,7 +8,7 @@ import { LogPathModal } from "./LogPathModal";
 type CheckState = Record<string, { loading: boolean; result?: ConnectionCheckResult; error?: string }>;
 type ContextMenuState = { x: number; y: number; entryId: string; dirUrl: string } | null;
 
-export function ServerConfig() {
+export function ServerConfig({ view = "all" }: { view?: "all" | "connection" | "scope" }) {
   const { config, toggleLogEntry, toggleGroup, save } = useServerStore();
   const [showModal, setShowModal] = useState(false);
   const [authDraft, setAuthDraft] = useState({ username: "", password: "" });
@@ -217,7 +217,7 @@ export function ServerConfig() {
   return (
     <section ref={sectionRef} className="relative border-b border-[#d9e1ec] bg-white px-5 py-4">
       {/* Top row: credentials + base URL */}
-      <div className="mb-3 grid max-w-[1080px] items-end gap-4" style={{ gridTemplateColumns: "1fr 1fr 2fr auto auto" }}>
+      <div className={view === "scope" ? "hidden" : "mb-3 grid max-w-[1080px] items-end gap-4"} style={{ gridTemplateColumns: view === "connection" ? "1fr 1fr" : "1fr 1fr 2fr auto auto" }}>
         <label className="block text-sm font-medium">
           用户名
           <input
@@ -241,7 +241,7 @@ export function ServerConfig() {
             }}
           />
         </label>
-        <label className="block text-sm font-medium">
+        <label className={`block text-sm font-medium ${view === "connection" ? "col-span-2" : ""}`}>
           URL 前缀
           <input
             className="mt-1 w-full rounded-md border border-[#cfd8e6] bg-white px-3 py-2 outline-none focus:border-[#2563eb]"
@@ -273,7 +273,7 @@ export function ServerConfig() {
       </div>
 
       {/* Log entry checkboxes - grouped */}
-      <div className="space-y-2">
+      <div className={view === "connection" ? "hidden" : "space-y-2"}>
         <div className="flex items-center gap-2">
           <button
             className="inline-flex items-center gap-1.5 rounded-md border border-[#cfd8e6] bg-[#f8fafc] px-3 py-1.5 text-xs font-medium text-[#69778c] hover:bg-[#eef3f8]"
@@ -282,9 +282,9 @@ export function ServerConfig() {
           >
             <Settings size={14} /> 日志路径配置
           </button>
-          <div className="relative">
+          <div className="relative min-w-0 flex-1">
             <input
-              className="w-64 rounded-md border border-[#cfd8e6] bg-white py-1.5 pl-3 pr-7 text-xs outline-none focus:border-[#2563eb]"
+              className="w-full max-w-64 rounded-md border border-[#cfd8e6] bg-white py-1.5 pl-3 pr-7 text-xs outline-none focus:border-[#2563eb]"
               placeholder="搜索日志 URL 或文件名..."
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
@@ -376,7 +376,7 @@ export function ServerConfig() {
         )}
       </div>
 
-      <p className="mt-3 text-xs text-[#69778c]">
+      <p className={view === "connection" ? "hidden" : "mt-3 text-xs leading-5 text-[#69778c]"}>
         勾选要操作的日志，下载和截取时将直接使用配置的日志文件 URL（{baseUrlDraft}路径/日志文件）。若日志文件为 .gz 格式将自动解压。
       </p>
 

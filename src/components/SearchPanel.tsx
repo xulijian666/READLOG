@@ -1,7 +1,8 @@
-import { Archive, ChevronDown, ChevronRight, FolderOpen, RefreshCw, Search, X, XCircle } from "lucide-react";
+import { Archive, ChevronDown, ChevronRight, FolderOpen, RefreshCw, Search, Settings2, SlidersHorizontal, X, XCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { invoke, listen } from "../lib/runtime";
 import { useServerStore } from "../store/serverStore";
+import { SearchResults } from "./SearchResults";
 import type { DirEntry, LogSearchHit, LogSearchProgressEvent, LogSearchRequest, LogSearchResultEvent } from "../types/query";
 
 type MatchMode = LogSearchRequest["matchMode"];
@@ -66,13 +67,13 @@ function getMatchModeHint(mode: MatchMode) {
   return "包含任一：按空格拆词，同一行包含任意一个即可。";
 }
 
-function CustomCheckbox({ checked, onChange }: { checked: boolean; onChange: () => void }) {
+function CustomCheckbox({ checked }: { checked: boolean }) {
   return (
     <span
       className={`flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded border ${
         checked ? "border-[#2563eb] bg-[#2563eb]" : "border-[#cfd8e6] bg-white"
       }`}
-      onClick={onChange}
+      aria-hidden="true"
     >
       {checked && (
         <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
@@ -83,7 +84,7 @@ function CustomCheckbox({ checked, onChange }: { checked: boolean; onChange: () 
   );
 }
 
-export function SearchPanel() {
+export function SearchPanel({ onOpenScope }: { onOpenScope: () => void }) {
   const config = useServerStore((state) => state.config);
   const [keyword, setKeyword] = useState("");
   const [matchMode, setMatchMode] = useState<MatchMode>("phrase");
@@ -94,7 +95,20 @@ export function SearchPanel() {
   const [error, setError] = useState("");
   const [results, setResults] = useState<LogSearchHit[]>([]);
   const [progress, setProgress] = useState<LogSearchProgressEvent | null>(null);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [advanced, setAdvanced] = useState(() => {
+    try { return localStorage.getItem("readlog.search.advanced") === "true"; } catch { return false; }
+  });
+  const [focus, setFocus] = useState(false);
+  const [appliedQuery, setAppliedQuery] = useState({ keyword: "", caseSensitive: false, matchMode: "phrase" as MatchMode });
+  useEffect(() => {
+    try { localStorage.setItem("readlog.search.advanced", String(advanced)); } catch { /* Optional preference. */ }
+  }, [advanced]);
+  useEffect(() => {
+    if (!focus) return;
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setFocus(false); };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [focus]);
   const queryIdRef = useRef<string | null>(null);
 
   // Archive search state
@@ -238,13 +252,14 @@ export function SearchPanel() {
       }
     }
 
-    const contextCount = Math.max(0, Number.parseInt(beforeLines, 10) || 5);
+    const parsedContext = Number.parseInt(beforeLines, 10);
+    const contextCount = Math.max(0, Number.isFinite(parsedContext) ? parsedContext : 5);
     const max = Math.max(1, Number.parseInt(maxResults, 10) || 500);
     const queryId = crypto.randomUUID();
     queryIdRef.current = queryId;
     setResults([]);
     setProgress(null);
-    setExpandedIds(new Set());
+    setAppliedQuery({ keyword: trimmed, caseSensitive, matchMode });
     setRunning(true);
 
     try {
@@ -290,15 +305,6 @@ export function SearchPanel() {
     setRunning(false);
   };
 
-  const toggleExpanded = (id: string) => {
-    setExpandedIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   const scopeLabel = archiveMode
     ? `归档文件 ${selectedFiles.size} 个`
     : `当前勾选的 ${enabledEntries.length} 个单体日志 URL`;
@@ -308,183 +314,44 @@ export function SearchPanel() {
   const someSelected = selectedFiles.size > 0 && selectedFiles.size < fileCount;
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col bg-[#f5f7fb] px-5 py-5">
-      <div className="rounded-lg border border-[#d9e1ec] bg-white p-5">
-        {/* Archive mode toggle row */}
-        <div className="mb-3 flex items-center gap-4">
-          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-[#243145]">
-            <input
-              type="checkbox"
-              className="accent-[#2563eb]"
-              checked={archiveMode}
-              onChange={(e) => {
-                setArchiveMode(e.target.checked);
-                setError("");
-                setResults([]);
-                setProgress(null);
-              }}
-            />
-            <Archive size={15} /> 归档查询
-          </label>
-          {archiveMode && (
-            <>
-              <select
-                className="min-w-[180px] rounded-md border border-[#cfd8e6] bg-white px-3 py-1.5 text-sm outline-none focus:border-[#2563eb]"
-                value={archiveEntryId}
-                onChange={(e) => {
-                  setArchiveEntryId(e.target.value);
-                  setSelectedFiles(new Set());
-                  setArchiveFiles([]);
-                  setError("");
-                }}
-              >
-                <option value="">-- 选择日志路径 --</option>
-                {enabledEntries.map((e) => (
-                  <option key={e.id} value={e.id}>{e.name}</option>
-                ))}
-              </select>
-              <button
-                className="inline-flex items-center gap-1.5 rounded-md border border-[#cfd8e6] bg-white px-3 py-1.5 text-sm text-[#69778c] hover:bg-[#eef3f8] disabled:opacity-50"
-                type="button"
-                onClick={() => void openArchiveModal()}
-                disabled={loadingFiles || !archiveEntryId}
-              >
-                <RefreshCw size={14} className={loadingFiles ? "animate-spin" : ""} /> {loadingFiles ? "加载中..." : "加载文件"}
-              </button>
-              {selectedFiles.size > 0 && (
-                <span className="text-xs text-[#69778c]">已选 {selectedFiles.size} 个文件</span>
-              )}
-            </>
-          )}
+    <section className={focus ? "fixed inset-0 z-40 flex min-h-0 flex-col bg-[#f5f7fb] p-3" : "flex min-h-0 flex-1 flex-col gap-3 overflow-hidden bg-[#f5f7fb] px-4 py-3"}>
+      {!focus && <div className="shrink-0 rounded-lg border border-[#d9e1ec] bg-white px-3 py-2.5">
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-[200px] flex-1">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94a3b8]" />
+            <input aria-label="关键词" className="w-full rounded-md border border-[#cfd8e6] bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2563eb]" value={keyword} onChange={event => setKeyword(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !running) void startSearch(); }} placeholder="输入 traceId / 订单号 / 接口 / Exception" />
+          </div>
+          <select aria-label="匹配方式" title={getMatchModeHint(matchMode)} className="rounded-md border border-[#cfd8e6] bg-white px-2 py-2 text-sm outline-none focus:border-[#2563eb]" value={matchMode} onChange={event => setMatchMode(event.target.value as MatchMode)}>
+            {(Object.keys(matchModeLabels) as MatchMode[]).map(mode => <option key={mode} value={mode}>{matchModeLabels[mode]}</option>)}
+          </select>
+          <button type="button" className="reader-tool border border-[#d9e1ec] py-2" onClick={onOpenScope}><SlidersHorizontal size={14} /> 查询范围 · {enabledEntries.length}</button>
+          <button type="button" className="reader-tool py-2" aria-expanded={advanced} onClick={() => setAdvanced(value => !value)}><Settings2 size={14} /> 高级选项</button>
+          <button type="button" className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[#2563eb] px-4 py-2 text-sm font-medium text-white hover:bg-[#1d4ed8] disabled:opacity-50" disabled={running} onClick={() => void startSearch()}><Search size={15} /> 查询</button>
+          {running && <button type="button" className="reader-tool border border-[#d9e1ec] py-2" onClick={() => void cancelSearch()}><XCircle size={14} /> 取消</button>}
         </div>
-
-        {/* Search controls row */}
-        <div className="grid items-end gap-4" style={{ gridTemplateColumns: archiveMode ? "minmax(260px, 1fr) 130px 120px 120px auto auto" : "minmax(300px, 1fr) 140px 130px 130px auto auto" }}>
-          <label className="block text-sm font-medium text-[#243145]">
-            关键词
-            <input
-              className="mt-1 w-full rounded-md border border-[#cfd8e6] bg-white px-3 py-2 outline-none focus:border-[#2563eb]"
-              value={keyword}
-              onChange={(event) => setKeyword(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !running) void startSearch();
-              }}
-              placeholder="traceId / 订单号 / 接口 / Exception"
-            />
-          </label>
-          <label className="block text-sm font-medium text-[#243145]">
-            匹配方式
-            <select
-              className="mt-1 w-full rounded-md border border-[#cfd8e6] bg-white px-3 py-2 outline-none focus:border-[#2563eb]"
-              value={matchMode}
-              onChange={(event) => setMatchMode(event.target.value as MatchMode)}
-            >
-              {(Object.keys(matchModeLabels) as MatchMode[]).map((mode) => (
-                <option key={mode} value={mode}>{matchModeLabels[mode]}</option>
-              ))}
+        <div className="mt-2 flex items-center gap-3 text-xs text-[#69778c]">
+          <label className="inline-flex shrink-0 cursor-pointer items-center gap-1.5"><input type="checkbox" className="accent-[#2563eb]" checked={archiveMode} disabled={running} onChange={event => { setArchiveMode(event.target.checked); setError(""); setResults([]); setProgress(null); }} /><Archive size={13} /> 归档查询</label>
+          {archiveMode ? <>
+            <select aria-label="归档日志路径" className="max-w-[250px] rounded border border-[#d9e1ec] px-2 py-1 outline-none focus:border-[#2563eb]" disabled={running} value={archiveEntryId} onChange={event => { setArchiveEntryId(event.target.value); setSelectedFiles(new Set()); setArchiveFiles([]); setError(""); }}>
+              <option value="">选择日志路径</option>{enabledEntries.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
             </select>
-          </label>
-          <label className="block text-sm font-medium text-[#243145]">
-            上下文行数
-            <input
-              className="mt-1 w-full rounded-md border border-[#cfd8e6] bg-white px-3 py-2 outline-none focus:border-[#2563eb]"
-              value={beforeLines}
-              onChange={(event) => setBeforeLines(event.target.value)}
-            />
-          </label>
-          <label className="block text-sm font-medium text-[#243145]">
-            最大结果
-            <input
-              className="mt-1 w-full rounded-md border border-[#cfd8e6] bg-white px-3 py-2 outline-none focus:border-[#2563eb]"
-              value={maxResults}
-              onChange={(event) => setMaxResults(event.target.value)}
-            />
-          </label>
-          <label className="flex items-center gap-2 pb-2 text-sm text-[#4f6177]">
-            <input
-              type="checkbox"
-              checked={caseSensitive}
-              onChange={(event) => setCaseSensitive(event.target.checked)}
-            />
-            区分大小写
-          </label>
-          <div className="flex gap-2">
-            <button
-              className="inline-flex items-center gap-2 rounded-md bg-[#2563eb] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#1d4ed8] disabled:opacity-50"
-              type="button"
-              onClick={() => void startSearch()}
-              disabled={running}
-            >
-              <Search size={16} /> 查询
-            </button>
-            <button
-              className="inline-flex items-center gap-2 rounded-md border border-[#cfd8e6] px-4 py-2.5 text-sm hover:bg-[#eef3f8] disabled:opacity-50"
-              type="button"
-              onClick={() => void cancelSearch()}
-              disabled={!running}
-            >
-              <XCircle size={16} /> 取消
-            </button>
-          </div>
+            <button type="button" className="reader-tool py-0.5" onClick={() => void openArchiveModal()} disabled={running || loadingFiles || !archiveEntryId}><RefreshCw size={12} className={loadingFiles ? "animate-spin" : ""} />{loadingFiles ? "加载中…" : "选择文件"}</button>
+            <span>已选 {selectedFiles.size} 个归档文件</span>
+          </> : <span className="truncate">查询范围：{scopeLabel}</span>}
         </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-[#69778c]">
-          <span>查询范围：{scopeLabel}</span>
+        {advanced && <div className="mt-2 flex items-center gap-5 border-t border-[#edf1f6] pt-2 text-xs text-[#607086]">
+          <label className="flex items-center gap-2">上下文行数 <input aria-label="上下文行数" type="number" min="0" className="w-20 rounded border border-[#cfd8e6] px-2 py-1" value={beforeLines} onChange={event => setBeforeLines(event.target.value)} /></label>
+          <label className="flex items-center gap-2">最大结果 <input aria-label="最大结果" type="number" min="1" className="w-20 rounded border border-[#cfd8e6] px-2 py-1" value={maxResults} onChange={event => setMaxResults(event.target.value)} /></label>
+          <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" checked={caseSensitive} onChange={event => setCaseSensitive(event.target.checked)} />区分大小写</label>
           <span>{getMatchModeHint(matchMode)}</span>
-          {progress && (
-            <>
-              <span>扫描 {formatBytes(progress.scannedBytes)}</span>
-              <span>{progress.scannedLines.toLocaleString()} 行</span>
-              <span>命中 {results.length.toLocaleString()} 条</span>
-              {running && progress.currentServer && <span>正在查：{progress.currentServer}</span>}
-            </>
-          )}
-        </div>
-
-        {error && <div className="mt-4 rounded-md bg-[#fff1f3] px-3 py-2 text-sm text-[#b42318]">{error}</div>}
+        </div>}
+      </div>}
+      <div className={`flex shrink-0 items-center justify-between gap-3 text-xs text-[#69778c] ${focus ? "mb-2 px-1" : "px-1"}`} role="status">
+        <div className="flex min-w-0 items-center gap-3"><span className={`inline-flex shrink-0 items-center gap-1.5 ${running ? "text-[#2563eb]" : ""}`}><span className={`h-1.5 w-1.5 rounded-full ${running ? "animate-pulse bg-[#2563eb]" : "bg-[#94a3b8]"}`} />{running ? "正在查询" : progress?.status === "cancelled" ? "已取消" : progress?.status === "completed" ? "查询完成" : "就绪"}</span>{progress && <><span className="shrink-0">扫描 {formatBytes(progress.scannedBytes)} · {progress.scannedLines.toLocaleString()} 行</span><span className="truncate">{running ? progress.currentServer : ""}</span></>}</div>
+        <div className="flex shrink-0 items-center gap-3"><span>命中 {results.length.toLocaleString()} 条</span>{focus && running && <button type="button" className="reader-tool" onClick={() => void cancelSearch()}>取消查询</button>}</div>
       </div>
-
-      <div className="mt-4 min-h-0 flex-1 overflow-auto rounded-lg border border-[#d9e1ec] bg-white">
-        {results.length === 0 ? (
-          <div className="px-5 py-16 text-center text-sm text-[#6b7280]">
-            {running ? "正在查询，命中后会自动显示" : "暂无查询结果"}
-          </div>
-        ) : (
-          <div className="divide-y divide-[#edf1f6]">
-            {results.map((result, index) => {
-              const expanded = expandedIds.has(result.id);
-              const before = expanded ? result.detailBeforeLines : result.previewBeforeLines;
-              const after = expanded ? result.detailAfterLines : result.previewAfterLines;
-              return (
-                <div key={`${result.id}-${index}`} className="px-4 py-3 hover:bg-[#f8fbff]">
-                  <button
-                    type="button"
-                    className="mb-2 flex w-full items-center gap-2 text-left"
-                    onClick={() => toggleExpanded(result.id)}
-                  >
-                    {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                    <span className="rounded bg-[#e0ecff] px-2 py-0.5 text-xs font-semibold text-[#1d4ed8]">
-                      {result.serverName}
-                    </span>
-                    <span className="text-xs text-[#69778c]">{result.fileName}</span>
-                    <span className="text-xs text-[#69778c]">#{result.lineNumber}</span>
-                    {expanded && <span className="text-xs text-[#047857]">完整上下文</span>}
-                  </button>
-                  <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-[#0f172a] px-3 py-2 font-mono text-[12px] leading-5 text-[#dbeafe]">
-                    {before.map((line, lineIndex) => (
-                      <div key={`b-${lineIndex}`} className="text-[#94a3b8]">{line}</div>
-                    ))}
-                    <div className="bg-[#1e3a8a] text-white">{highlightLine(result.matchedLine, keyword.trim(), caseSensitive, matchMode)}</div>
-                    {after.map((line, lineIndex) => (
-                      <div key={`a-${lineIndex}`} className="text-[#cbd5e1]">{line}</div>
-                    ))}
-                  </pre>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      {error && <div role="alert" className="shrink-0 rounded-md bg-[#fff1f3] px-3 py-2 text-xs text-[#b42318]">{error}</div>}
+      <SearchResults results={results} running={running} focus={focus} onToggleFocus={() => setFocus(value => !value)} highlight={line => highlightLine(line, appliedQuery.keyword, appliedQuery.caseSensitive, appliedQuery.matchMode)} />
 
       {/* Archive file picker modal */}
       {showModal && (
@@ -521,13 +388,13 @@ export function SearchPanel() {
             </div>
 
             <div className="flex items-center justify-between border-b border-[#e8ecf2] px-5 py-2">
-              <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-[#243145]">
+              <label className="-m-2 inline-flex cursor-pointer items-center gap-2 p-2 text-sm text-[#243145]">
                 <input className="sr-only" type="checkbox" checked={allSelected} onChange={toggleAllFiles} />
                 <span
                   className={`flex h-4 w-4 items-center justify-center rounded border ${
                     allSelected ? "border-[#2563eb] bg-[#2563eb]" : someSelected ? "border-[#2563eb] bg-[#2563eb]" : "border-[#cfd8e6] bg-white"
                   }`}
-                  onClick={toggleAllFiles}
+                  aria-hidden="true"
                 >
                   {allSelected ? (
                     <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -561,7 +428,7 @@ export function SearchPanel() {
                   ) : (
                     <label key={file.url} className="flex cursor-pointer items-center gap-2.5 rounded px-4 py-2 text-sm hover:bg-[#f0f4ff]">
                       <input className="sr-only" type="checkbox" checked={selectedFiles.has(file.url)} onChange={() => toggleFile(file.url)} />
-                      <CustomCheckbox checked={selectedFiles.has(file.url)} onChange={() => toggleFile(file.url)} />
+                      <CustomCheckbox checked={selectedFiles.has(file.url)} />
                       <span className="flex-1 truncate text-[#243145]">{file.name}</span>
                       {file.name.endsWith(".gz") && (
                         <span className="shrink-0 rounded bg-[#dbeafe] px-1.5 py-0.5 text-[10px] font-medium text-[#2563eb]">gz</span>
