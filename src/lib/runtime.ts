@@ -8,47 +8,10 @@ export function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-const mockConfig: AppConfig = {
-  baseUrl: "http://10.142.149.25:61000/",
-  logEntries: [
-    {
-      id: "mock-sit-124",
-      name: "SIT-124",
-      path: "/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.124/",
-      logFile: "app.log",
-      visible: true,
-      enabled: true,
-      displayOrder: 0,
-      groupId: "mock-g1",
-      groupName: "核心服务",
-    },
-    {
-      id: "mock-sit-186",
-      name: "SIT-186",
-      path: "/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.186/",
-      logFile: "app.log",
-      visible: true,
-      enabled: true,
-      displayOrder: 1,
-      groupId: "mock-g1",
-      groupName: "核心服务",
-    },
-    {
-      id: "mock-sit-50",
-      name: "SIT-50",
-      path: "/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.50/",
-      logFile: "app.log",
-      visible: true,
-      enabled: false,
-      displayOrder: 2,
-      groupId: "mock-g2",
-      groupName: "接口服务",
-    },
-  ],
-  credentials: {
-    username: "cgisteam",
-    password: "",
-  },
+const emptyConfig: AppConfig = {
+  baseUrl: "",
+  logEntries: [],
+  credentials: { username: "", password: "" },
   settings: {
     maxConcurrentServers: 3,
     defaultBatchSize: 500,
@@ -59,11 +22,11 @@ const mockConfig: AppConfig = {
 
 function readBrowserConfig() {
   const raw = localStorage.getItem("readlog.config");
-  if (!raw) return mockConfig;
+  if (!raw) return emptyConfig;
   try {
     return JSON.parse(raw) as AppConfig;
   } catch {
-    return mockConfig;
+    return emptyConfig;
   }
 }
 

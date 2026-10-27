@@ -11,11 +11,17 @@ interface ServerState {
   upsertLogEntry: (entry: LogEntry) => Promise<void>;
   deleteLogEntry: (entryId: string) => Promise<void>;
   toggleLogEntry: (entryId: string) => Promise<void>;
+  toggleLogEntries: (entryIds: string[]) => Promise<void>;
   toggleLogEntryVisible: (entryId: string) => Promise<void>;
   toggleGroup: (groupId: string) => Promise<void>;
   toggleGroupVisible: (groupId: string) => Promise<void>;
   deleteGroup: (groupId: string) => Promise<void>;
 }
+
+// Keep rapid manual selections responsive while writing snapshots in order.
+let saveQueue: Promise<void> = Promise.resolve();
+let saveRevision = 0;
+let persistedConfig: AppConfig | null = null;
 
 export const useServerStore = create<ServerState>((set, get) => ({
   config: null,
@@ -25,19 +31,26 @@ export const useServerStore = create<ServerState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const config = await invoke<AppConfig>("load_app_config");
+      persistedConfig = config;
       set({ config, loading: false });
     } catch (error) {
       set({ error: String(error), loading: false });
     }
   },
   save: async (config) => {
-    set({ loading: true, error: null });
-    try {
-      const saved = await invoke<AppConfig>("save_app_config", { config });
-      set({ config: saved, loading: false });
-    } catch (error) {
-      set({ error: String(error), loading: false });
-    }
+    const revision = ++saveRevision;
+    set({ config, loading: true, error: null });
+    const pending = saveQueue.then(async () => {
+      try {
+        const saved = await invoke<AppConfig>("save_app_config", { config });
+        persistedConfig = saved;
+        if (revision === saveRevision) set({ config: saved, loading: false });
+      } catch (error) {
+        if (revision === saveRevision) set({ config: persistedConfig, error: String(error), loading: false });
+      }
+    });
+    saveQueue = pending;
+    await pending;
   },
   upsertLogEntry: async (entry) => {
     const config = get().config;
@@ -57,10 +70,17 @@ export const useServerStore = create<ServerState>((set, get) => ({
     await get().save({ ...config, logEntries });
   },
   toggleLogEntry: async (entryId) => {
+    await get().toggleLogEntries([entryId]);
+  },
+  toggleLogEntries: async (entryIds) => {
     const config = get().config;
     if (!config) return;
+    const ids = new Set(entryIds);
+    const entries = config.logEntries.filter(entry => ids.has(entry.id));
+    if (!entries.length) return;
+    const enabled = !entries.every(entry => entry.enabled);
     const logEntries = config.logEntries.map((entry) =>
-      entry.id === entryId ? { ...entry, enabled: !entry.enabled } : entry,
+      ids.has(entry.id) ? { ...entry, enabled } : entry,
     );
     await get().save({ ...config, logEntries });
   },

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { exportXlsx } from "../lib/runtime";
+import { groupLogEntries, sortLogEntries } from "../lib/serverEntries";
 import { useServerStore } from "../store/serverStore";
 import type { LogEntry } from "../types/query";
 
@@ -45,19 +46,11 @@ const emptyEntryDraft = (groupId = "", groupName = ""): EntryDraft => ({
 });
 
 function groupEntries(entries: LogEntry[]): Map<string, { name: string; entries: LogEntry[] }> {
-  const groups = new Map<string, { name: string; entries: LogEntry[] }>();
-  for (const entry of entries) {
-    if (!entry.groupId) continue;
-    if (!groups.has(entry.groupId)) {
-      groups.set(entry.groupId, { name: entry.groupName, entries: [] });
-    }
-    groups.get(entry.groupId)!.entries.push(entry);
-  }
-  return groups;
+  return new Map(groupLogEntries(entries).filter(([id]) => id));
 }
 
 function getUngrouped(entries: LogEntry[]): LogEntry[] {
-  return entries.filter((e) => !e.groupId);
+  return sortLogEntries(entries.filter((e) => !e.groupId));
 }
 
 function parseFullUrl(fullUrl: string): { path: string; logFile: string } {
@@ -438,7 +431,7 @@ export function LogPathModal({ onClose }: Props) {
                   <input
                     className="mt-1 w-full rounded-md border border-[#cfd8e6] bg-white px-3 py-2 outline-none focus:border-[#2563eb]"
                     value={(form.draft as EntryDraft).path}
-                    placeholder="/fileviewer/gcis/SIT/log/gemini/SIT/C1/cgis-web-benefit/10.142.152.130/"
+                    placeholder="如：/logs/service/node/"
                     onChange={(e) => setForm({ ...form, draft: { ...(form.draft as EntryDraft), path: e.target.value } })}
                   />
                 </label>

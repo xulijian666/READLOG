@@ -66,9 +66,9 @@ export default function App() {
 
       {config && (
         <>
-          <div className={activePanel === "download" ? "max-h-[55vh] shrink-0 overflow-auto" : drawer ? "fixed inset-0 z-50 flex justify-end bg-black/30" : "hidden"} onClick={activePanel === "search" ? () => setDrawer(null) : undefined}>
+          <div className={activePanel === "download" ? "flex min-h-0 flex-1 flex-col overflow-hidden" : drawer ? "fixed inset-0 z-50 flex justify-end bg-black/30" : "hidden"} onClick={activePanel === "search" ? () => setDrawer(null) : undefined}>
             <div ref={drawerRef} role={activePanel === "search" ? "dialog" : undefined} aria-modal={activePanel === "search" ? true : undefined} aria-label={drawer === "connection" ? "连接配置" : "查询范围"}
-              className={activePanel === "search" ? "flex h-full w-[560px] max-w-[85vw] flex-col bg-white shadow-xl" : ""}
+              className={activePanel === "search" ? "flex h-full w-[560px] max-w-[85vw] flex-col bg-white shadow-xl" : "flex min-h-0 flex-1 flex-col"}
               onClick={event => event.stopPropagation()}
               onKeyDown={event => {
                 if (activePanel !== "search") return;
@@ -81,10 +81,10 @@ export default function App() {
                 }
               }}>
               {activePanel === "search" && <div className="flex shrink-0 items-center justify-between border-b border-[#e3e8f0] px-5 py-4"><div><h2 className="text-sm font-semibold">{drawer === "connection" ? "连接配置" : "查询范围"}</h2><p className="mt-1 text-xs text-[#69778c]">{drawer === "connection" ? "配置认证信息与日志 URL 前缀" : "勾选需要查询的日志，关闭后立即应用"}</p></div><button type="button" className="reader-tool" aria-label="关闭配置面板" onClick={() => setDrawer(null)}><X size={18} /></button></div>}
-              <div className={activePanel === "search" ? "min-h-0 flex-1 overflow-auto" : ""}><ServerConfig view={activePanel === "download" ? "all" : drawer || "scope"} /></div>
+              <div className={activePanel === "search" ? "min-h-0 flex-1 overflow-auto" : "flex min-h-0 flex-1 flex-col"}><ServerConfig view={activePanel === "download" ? "all" : drawer || "scope"} /></div>
             </div>
           </div>
-          <div className={activePanel === "download" ? "flex min-h-0 flex-1 flex-col" : "hidden"}><DownloadPanel /></div>
+          <div className={activePanel === "download" ? "flex max-h-[45vh] min-h-0 shrink-0 flex-col" : "hidden"}><DownloadPanel /></div>
           <div className={activePanel === "search" ? "flex min-h-0 flex-1 flex-col" : "hidden"}><SearchPanel onOpenScope={() => setDrawer("scope")} /></div>
         </>
       )}

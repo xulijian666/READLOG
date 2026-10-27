@@ -1,8 +1,7 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tokio::fs;
-use uuid::Uuid;
 
 use crate::crypto::{protect_password, reveal_password};
 use crate::error::{AppError, AppResult};
@@ -75,52 +74,15 @@ pub struct AppConfig {
 }
 
 fn default_base_url() -> String {
-    "http://10.142.149.25:61000/".to_string()
+    String::new()
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             base_url: default_base_url(),
-            log_entries: vec![
-                LogEntry {
-                    id: Uuid::new_v4().to_string(),
-                    name: "SIT-124".to_string(),
-                    path: "/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.124/".to_string(),
-                    log_file: "app.log".to_string(),
-                    visible: true,
-                    enabled: true,
-                    display_order: 0,
-                    group_id: String::new(),
-                    group_name: String::new(),
-                },
-                LogEntry {
-                    id: Uuid::new_v4().to_string(),
-                    name: "SIT-186".to_string(),
-                    path: "/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.186/".to_string(),
-                    log_file: "app.log".to_string(),
-                    visible: true,
-                    enabled: true,
-                    display_order: 1,
-                    group_id: String::new(),
-                    group_name: String::new(),
-                },
-                LogEntry {
-                    id: Uuid::new_v4().to_string(),
-                    name: "SIT-50".to_string(),
-                    path: "/fileviewer/gcis/SIT/log/coregroup/core_log/INTERFACE/10.142.149.50/".to_string(),
-                    log_file: "app.log".to_string(),
-                    visible: true,
-                    enabled: false,
-                    display_order: 2,
-                    group_id: String::new(),
-                    group_name: String::new(),
-                },
-            ],
-            credentials: AuthConfig {
-                username: "cgisteam".to_string(),
-                password: String::new(),
-            },
+            log_entries: Vec::new(),
+            credentials: AuthConfig::default(),
             settings: Settings {
                 max_concurrent_servers: 3,
                 default_batch_size: 500,
@@ -133,6 +95,7 @@ impl Default for AppConfig {
 }
 
 pub fn config_path() -> AppResult<PathBuf> {
+    // This user-owned location is stable across upgrades and outside the install directory.
     let mut base = dirs::config_dir().ok_or_else(|| AppError::NotFound("config directory".to_string()))?;
     base.push("LogViewer");
     base.push("config.json");
@@ -140,7 +103,10 @@ pub fn config_path() -> AppResult<PathBuf> {
 }
 
 pub async fn load_config() -> AppResult<AppConfig> {
-    let path = config_path()?;
+    load_config_from_path(&config_path()?).await
+}
+
+async fn load_config_from_path(path: &Path) -> AppResult<AppConfig> {
     if !path.exists() {
         return Ok(AppConfig::default());
     }
@@ -170,7 +136,6 @@ pub async fn load_config() -> AppResult<AppConfig> {
                 group_name: String::new(),
             });
         }
-        config.servers.clear();
     }
 
     // Migrate credentials from legacy per-server
@@ -187,6 +152,7 @@ pub async fn load_config() -> AppResult<AppConfig> {
     if !config.credentials.password.is_empty() {
         config.credentials.password = reveal_password(&config.credentials.password)?;
     }
+    config.servers.clear();
     Ok(config)
 }
 
@@ -222,11 +188,18 @@ fn extract_path_from_url(full_url: &str, base_url: &str) -> String {
     String::new()
 }
 
-pub async fn save_config(mut config: AppConfig) -> AppResult<AppConfig> {
-    if !config.base_url.ends_with('/') {
+pub async fn save_config(config: AppConfig) -> AppResult<AppConfig> {
+    save_config_to_path(config, &config_path()?).await
+}
+
+async fn save_config_to_path(mut config: AppConfig, path: &Path) -> AppResult<AppConfig> {
+    config.base_url = config.base_url.trim().to_string();
+    if !config.base_url.is_empty() && !config.base_url.ends_with('/') {
         config.base_url.push('/');
     }
-    validate_log_url(&config.base_url)?;
+    if !config.base_url.is_empty() {
+        validate_log_url(&config.base_url)?;
+    }
 
     for entry in &mut config.log_entries {
         if !entry.path.ends_with('/') {
@@ -234,7 +207,6 @@ pub async fn save_config(mut config: AppConfig) -> AppResult<AppConfig> {
         }
     }
 
-    let path = config_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).await?;
     }
@@ -283,6 +255,80 @@ pub fn extract_log_type(log_file: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{extract_log_type, validate_log_url};
+
+    #[tokio::test]
+    async fn first_launch_has_no_bundled_servers_and_does_not_create_config() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let config = super::load_config_from_path(&path).await.unwrap();
+        assert!(config.base_url.is_empty());
+        assert!(config.log_entries.is_empty());
+        assert!(config.credentials.username.is_empty());
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn existing_user_config_survives_repeated_launches_without_rewriting() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("user-data/config.json");
+        let mut config = super::AppConfig::default();
+        config.base_url = "https://logs.example.test".into();
+        config.credentials.username = "user".into();
+        config.credentials.password = "test-password".into();
+        config.settings.download_path = "D:/my-logs".into();
+        config.log_entries.push(super::LogEntry {
+            id: "custom-id".into(), name: "custom-service".into(),
+            path: "/custom/node/".into(), log_file: "server.log.gz".into(),
+            visible: true, enabled: false, display_order: 7,
+            group_id: "custom-group".into(), group_name: "my-group".into(),
+        });
+        super::save_config_to_path(config, &path).await.unwrap();
+        let bytes = tokio::fs::read(&path).await.unwrap();
+        for _ in 0..2 {
+            let loaded = super::load_config_from_path(&path).await.unwrap();
+            assert_eq!(loaded.base_url, "https://logs.example.test/");
+            assert_eq!(loaded.credentials.password, "test-password");
+            assert_eq!(loaded.settings.download_path, "D:/my-logs");
+            let entry = &loaded.log_entries[0];
+            assert_eq!(entry.id, "custom-id");
+            assert_eq!(entry.path, "/custom/node/");
+            assert_eq!(entry.log_file, "server.log.gz");
+            assert_eq!(entry.group_id, "custom-group");
+            assert!(!entry.enabled);
+            assert_eq!(tokio::fs::read(&path).await.unwrap(), bytes);
+        }
+    }
+
+    #[tokio::test]
+    async fn configuration_can_be_saved_before_connection_is_set() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        super::save_config_to_path(super::AppConfig::default(), &path).await.unwrap();
+        assert!(super::load_config_from_path(&path).await.unwrap().base_url.is_empty());
+    }
+
+    #[tokio::test]
+    async fn invalid_existing_config_is_reported_without_replacing_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        tokio::fs::write(&path, "invalid json").await.unwrap();
+        assert!(super::load_config_from_path(&path).await.is_err());
+        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "invalid json");
+    }
+
+    #[tokio::test]
+    async fn legacy_server_migration_keeps_url_and_credentials() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let text = r#"{"servers":[{"id":"old","name":"old-service","baseUrl":"https://old.example.test/logs/","username":"old-user","password":"old-password","enabled":true,"displayOrder":0}],"settings":{"maxConcurrentServers":3,"defaultBatchSize":500,"defaultLevel":"ALL"}}"#;
+        tokio::fs::write(&path, text).await.unwrap();
+        let loaded = super::load_config_from_path(&path).await.unwrap();
+        assert_eq!(loaded.base_url, "https://old.example.test/");
+        assert_eq!(loaded.log_entries[0].path, "/logs/");
+        assert_eq!(loaded.credentials.username, "old-user");
+        assert_eq!(loaded.credentials.password, "old-password");
+        assert!(loaded.servers.is_empty());
+    }
 
     #[test]
     fn accepts_http_url() {
