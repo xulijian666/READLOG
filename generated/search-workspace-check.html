@@ -1,0 +1,33 @@
+<!doctype html><html><head><meta charset="utf-8"><title>ReadLog 工作区交互验证</title></head><body><div id="root"></div><script type="module">
+import React from '/node_modules/.vite/deps/react.js';
+import ReactDOM from '/node_modules/.vite/deps/react-dom_client.js';
+import App from '/src/App.tsx';
+import '/src/index.css';
+const config={baseUrl:'http://preview.invalid/',credentials:{username:'preview',password:''},settings:{maxConcurrentServers:3,defaultBatchSize:500,defaultLevel:'ALL',downloadPath:''},logEntries:Array.from({length:30},(_,i)=>({id:'qa-'+i,name:'核心服务-'+i,path:'/logs/',logFile:'app.log',visible:true,enabled:i<3,displayOrder:i,groupId:'g'+Math.floor(i/5),groupName:'测试分组 '+Math.floor(i/5)}))};
+const callbacks=new Map(),listeners=new Map(); let next=1;
+window.qa={requests:[],config};
+const emit=(event,payload)=>{const handler=listeners.get(event); if(handler) callbacks.get(handler)({event,id:handler,payload});};
+window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener(){}};
+window.__TAURI_INTERNALS__={
+ transformCallback(callback){const id=next++;callbacks.set(id,callback);return id;},
+ async invoke(command,args={}){
+  if(command==='plugin:event|listen'){listeners.set(args.event,args.handler);return args.handler;}
+  if(command==='plugin:event|unlisten') return;
+  if(command==='load_app_config') return config;
+  if(command==='save_app_config'){Object.assign(config,args.config);return config;}
+  if(command==='check_agent_status') return {installed:false};
+  if(command==='list_archive_files') return [{name:'app-2026-10-16.log.gz',url:'preview://archive.log.gz',isDir:false}];
+  if(command==='search_log_files'||command==='search_archive_files'){
+   window.qa.requests.push({command,...args});
+   const queryId=args.request.queryId;
+   setTimeout(()=>{
+    const results=Array.from({length:35},(_,i)=>({id:queryId+'-'+i,logEntryId:'qa-'+(i%3),serverName:'核心服务-'+(i%3),fileName:i%2?'app-2026-10-16.log.gz':'app.log',lineNumber:240+i*400,matchedLine:'2026-10-16 15:20:31 ERROR traceId=QA-20261016 接口处理异常 '+(i===0?'detail='.repeat(70):'orderId=202610160001'),previewBeforeLines:['INFO 请求开始','INFO 正在处理'],previewAfterLines:['INFO 请求结束'],detailBeforeLines:Array.from({length:200},(_,n)=>'2026-10-16 15:20:30 INFO 上下文日志 '+n),detailAfterLines:Array.from({length:200},(_,n)=>'2026-10-16 15:20:32 INFO 后续处理日志 '+n)}));
+    emit('search-result',{queryId,batchIndex:0,results:results.slice(0,20),isLastBatch:false});
+    emit('search-progress',{queryId,status:'running',scannedBytes:1048576,scannedLines:15000,matchedCount:20,currentServer:'核心服务-2'});
+    setTimeout(()=>{emit('search-result',{queryId,batchIndex:1,results:results.slice(20),isLastBatch:true});emit('search-progress',{queryId,status:'completed',scannedBytes:2097152,scannedLines:30000,matchedCount:35,currentServer:''});},150);
+   },150);return queryId;
+  }
+ }
+};
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+</script></body></html>
